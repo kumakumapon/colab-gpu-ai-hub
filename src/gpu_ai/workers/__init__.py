@@ -20,6 +20,7 @@ def colab_worker_scripts() -> dict[Operation, WorkerScript]:
             "image_gen",
             (),
             image_gen.validate_request,
+            hub_http_downloads=True,
             artifacts_for=image_gen.output_paths,
         ),
         Operation.EXTRACT_TEXT: build_script(

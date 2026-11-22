@@ -34,10 +34,10 @@ def diffusion(monkeypatch):
         feature_extractor = object()
 
         @classmethod
-        def from_pretrained(cls, model_id, **kwargs):
-            assert model_id == image_gen.MODEL_ID
+        def from_pretrained(cls, model_path, **kwargs):
+            assert model_path == "/local/model"
             assert kwargs == {
-                "revision": image_gen.REVISION,
+                "local_files_only": True,
                 "variant": "fp16",
                 "torch_dtype": "fp16",
                 "use_safetensors": True,
@@ -93,6 +93,16 @@ def diffusion(monkeypatch):
     )
     monkeypatch.setitem(
         sys.modules, "diffusers", SimpleNamespace(StableDiffusionPipeline=Pipeline)
+    )
+
+    def download(model_id, *, revision, allow_patterns, max_workers):
+        assert model_id == image_gen.MODEL_ID and revision == image_gen.REVISION
+        assert "safety_checker/model.fp16.safetensors" in allow_patterns
+        assert max_workers == 4
+        return "/local/model"
+
+    monkeypatch.setitem(
+        sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=download)
     )
     return state
 
@@ -154,6 +164,7 @@ def test_image_bytes_are_repeatable_and_registered(
             assert metadata["safety_checker"] == "passed"
             assert metadata["model_id"] == image_gen.MODEL_ID
             assert metadata["peak_vram_mb"] == 12
+            assert metadata["model_download_time_ms"] >= 0
             assert [image["seed"] for image in metadata["images"]] == [19, 20, 21]
             assert "prompt" not in metadata
 

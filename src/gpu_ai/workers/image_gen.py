@@ -21,6 +21,20 @@ from ._runtime import (
 
 MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 REVISION = "451f4fe16113bff5a5d2269ed5ad43b0592e9a14"
+FP16_MODEL_FILES = (
+    "model_index.json",
+    "scheduler/*",
+    "tokenizer/*",
+    "feature_extractor/*",
+    "unet/config.json",
+    "unet/diffusion_pytorch_model.fp16.safetensors",
+    "vae/config.json",
+    "vae/diffusion_pytorch_model.fp16.safetensors",
+    "text_encoder/config.json",
+    "text_encoder/model.fp16.safetensors",
+    "safety_checker/config.json",
+    "safety_checker/model.fp16.safetensors",
+)
 PINS = {"diffusers": "0.43.0", "transformers": TRANSFORMERS_VERSION, "pillow": "13.0.0"}
 MAX_PROMPT_CHARS = 600
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -180,6 +194,7 @@ def run() -> dict:
     try:
         import torch
         from diffusers import StableDiffusionPipeline
+        from huggingface_hub import snapshot_download
         from PIL import Image
     except (ImportError, OSError, RuntimeError):
         raise WorkerError("worker_dependencies") from None
@@ -187,9 +202,17 @@ def run() -> dict:
     cuda_metrics(torch, device)
     started = perf_counter()
     try:
+        model_path = snapshot_download(
+            MODEL_ID, revision=REVISION, allow_patterns=FP16_MODEL_FILES, max_workers=4
+        )
+    except Exception:  # noqa: BLE001 - the Hub may include credentials in errors.
+        raise WorkerError("model_download_failed") from None
+    download_ms = (perf_counter() - started) * 1000
+    started = perf_counter()
+    try:
         pipeline = StableDiffusionPipeline.from_pretrained(
-            MODEL_ID,
-            revision=REVISION,
+            model_path,
+            local_files_only=True,
             variant="fp16",
             torch_dtype=torch.float16,
             use_safetensors=True,
@@ -217,6 +240,7 @@ def run() -> dict:
         "seed": settings.seed,
         "image_count": len(images),
         "safety_checker": "passed",
+        "model_download_time_ms": download_ms,
         "model_load_time_ms": load_ms,
         "generation_time_ms": sum(item["generation_time_ms"] for item in images),
         "peak_vram_mb": peak_memory_mib(torch, device),

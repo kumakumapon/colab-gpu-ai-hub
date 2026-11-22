@@ -14,6 +14,7 @@ def build_script(
     validate: Callable[[TaskRequest], None],
     *,
     cuda_libraries: tuple[str, ...] = (),
+    hub_http_downloads: bool = False,
     artifacts_for: Callable[[TaskRequest], tuple[str, ...]] | None = None,
 ) -> WorkerScript:
     directory = Path(__file__).parent
@@ -48,6 +49,9 @@ def build_script(
             (package / "_runtime.py").write_text({runtime!r}, encoding="utf-8")
             (package / "{module}.py").write_text({worker!r}, encoding="utf-8")
             environment = os.environ.copy()
+            if {hub_http_downloads!r}:
+                environment["HF_HUB_DISABLE_XET"] = "1"
+                environment["HF_HUB_DOWNLOAD_TIMEOUT"] = "40"
             search_paths = [directory, environment.get("PYTHONPATH", "")]
             environment["PYTHONPATH"] = os.pathsep.join(filter(None, search_paths))
             library_paths = []

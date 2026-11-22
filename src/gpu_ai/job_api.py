@@ -18,6 +18,7 @@ from gpu_ai.contracts import (
 )
 from gpu_ai.jobs import JobRecord
 from gpu_ai.media.validate import validate_transfer_path
+from gpu_ai.pipelines import video
 from gpu_ai.runner import JobRunner
 from gpu_ai.workers import (
     colab_worker_scripts,
@@ -113,8 +114,22 @@ class SamInput(WorkerInput):
     overlay: bool = Field(default=False, strict=True)
 
 
+class VideoInput(WorkerInput):
+    inputs: list[InputPath] = Field(min_length=1, max_length=1)
+    objects: list[SamObjectPrompt] = Field(
+        default_factory=list, max_length=sam2.MAX_OBJECTS
+    )
+    frame_interval_seconds: int = Field(default=5, ge=1, le=60, strict=True)
+    max_frames: int = Field(default=12, ge=1, le=24, strict=True)
+
+
 # Entry points discover supported operations from this registry.
 OPERATIONS = {
+    Operation.ANALYZE_VIDEO: (
+        VideoInput,
+        video.validate_request,
+        "Analyze video and produce a timestamped report.",
+    ),
     Operation.SEGMENT_OBJECT: (
         SamInput,
         sam2.validate_request,

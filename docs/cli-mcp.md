@@ -36,7 +36,7 @@ codex mcp add gpu-ai -- "$uv_bin" --directory "$project_dir" run --locked python
 
 CLI と MCP が別の作業ディレクトリから起動する場合は、同じ入力ルートと成果物ディレクトリを絶対パスで設定します。TOML を使う場合は、サーバー起動コマンドの末尾に `--config /path/to/settings.toml` を指定し、CLI には `gpu-ai --config /path/to/settings.toml` を指定します。MCP ホストにも WSL 側の Colab CLI の PATH とキーリングを使える環境を引き継いでください。
 
-Claude Code は `claude mcp list` とセッション内の `/mcp`、Codex は `codex mcp list` とセッション内の `/mcp` で接続を確認します。登録後、ホストで `transcribe_audio`、`estimate_depth`、`llm_infer`、`extract_text`、`generate_image`、`segment_object`、`get_job_status`、`get_job_result`、`cancel_job` の9ツールが見えるか確認してください。ツール一覧の取得で GPU は起動しません。Python MCP クライアントによる stdio 検証を自動テストに含めています。両ホストの対話セッションでの表示は未検証です。
+Claude Code は `claude mcp list` とセッション内の `/mcp`、Codex は `codex mcp list` とセッション内の `/mcp` で接続を確認します。登録後、ホストで `transcribe_audio`、`estimate_depth`、`llm_infer`、`extract_text`、`generate_image`、`segment_object`、`analyze_video`、`get_job_status`、`get_job_result`、`cancel_job` の10ツールが見えるか確認してください。ツール一覧の取得で GPU は起動しません。Python MCP クライアントによる stdio 検証を自動テストに含めています。両ホストの対話セッションでの表示は未検証です。
 
 - [Claude Code の公式 MCP 手順](https://code.claude.com/docs/en/mcp)
 - [Codex の公式 MCP 手順](https://developers.openai.com/codex/mcp)
@@ -49,3 +49,5 @@ Claude Code は `claude mcp list` とセッション内の `/mcp`、Codex は `c
 4. 中止する場合は `cancel_job` に同じ ID を渡し、停止状態を再確認します。接続が途切れた場合も、同じワークスペースの台帳を CLI から照会できます。解放が未確認なら `gpu-ai reconcile --retry` で回復を試みます。
 
 ユーザーが許可した入力ルートに置いたファイルだけを使います。ジョブの失敗や接続断を理由に実 GPU を自動で繰り返し起動しないでください。結果を報告するときはジョブ ID、成果物パス、停止状態を含めます。
+
+動画をひとつのジョブで分析するには [動画統合](workers/video.md) を参照してください。

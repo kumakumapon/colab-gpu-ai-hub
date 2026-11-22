@@ -1,18 +1,23 @@
 """Colab CLI backend for trusted, application-registered worker scripts."""
 
-import mimetypes
+import json
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
-from hashlib import sha256
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from threading import Lock
 from time import monotonic
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
+from gpu_ai.artifacts import (
+    MAX_ARCHIVE_FILES,
+    MAX_MANIFEST_BYTES,
+    TRANSFER_MANIFEST,
+    read_transfer_archive,
+)
 from gpu_ai.backends.base import job_deadline
 from gpu_ai.config import Settings
 from gpu_ai.contracts import (
@@ -22,8 +27,8 @@ from gpu_ai.contracts import (
     JobStatus,
     Operation,
     TaskRequest,
-    validate_relative_path,
 )
+from gpu_ai.media.validate import validate_transfer_path
 
 
 class ErrorCode(StrEnum):
@@ -149,13 +154,6 @@ def _classify(output: str, command: str) -> ErrorCode:
     return ErrorCode.COMMAND_FAILED
 
 
-def _file_path(path: str) -> str:
-    validate_relative_path(path)
-    if PurePosixPath(path).as_posix() != path or path.startswith("gpu-ai-"):
-        raise ValueError("expected a canonical, non-reserved relative file path")
-    return path
-
-
 @dataclass(frozen=True)
 class WorkerScript:
     """Python source provided by the application, with declared relative outputs."""
@@ -165,9 +163,11 @@ class WorkerScript:
 
     def __post_init__(self) -> None:
         for path in self.artifacts:
-            _file_path(path)
+            validate_transfer_path(path)
         if len(set(self.artifacts)) != len(self.artifacts):
             raise ValueError("duplicate artifact paths")
+        if len(self.artifacts) > MAX_ARCHIVE_FILES:
+            raise ValueError("too many declared artifacts")
         compile(self.source, "<colab-worker>", "exec")
 
 
@@ -179,7 +179,7 @@ class _Session:
     uploaded: bool = False
     cleanup: CleanupStatus = CleanupStatus.UNKNOWN
     result: JobResult | None = None
-    outputs: dict[str, bytes] = field(default_factory=dict)
+    outputs: dict[str, bytes] | None = None
 
 
 class ColabCLIBackend:
@@ -212,7 +212,7 @@ class ColabCLIBackend:
         if request.operation not in self._scripts:
             raise LookupError("no Colab worker registered for this operation")
         for path in request.inputs:
-            _file_path(path)
+            validate_transfer_path(path)
         if len(set(request.inputs)) != len(request.inputs):
             raise ValueError("duplicate input paths")
         for name, session in self._sessions.items():
@@ -341,43 +341,55 @@ class ColabCLIBackend:
         script = self._scripts[request.operation]
         session.status = JobStatus.RUNNING
         try:
-            outputs = self._execute(session_id, script)
+            artifacts = self._execute(session_id, script)
         except ColabCLIError:
             session.status = JobStatus.FAILED
             raise
-        session.outputs = outputs
-        session.status = JobStatus.COMPLETED
+        session.status = JobStatus.DOWNLOADING
         session.result = JobResult(
             job_id=request.job_id,
-            status=session.status,
-            artifacts=[
-                Artifact(
-                    path=path,
-                    mime_type=mimetypes.guess_type(path)[0]
-                    or "application/octet-stream",
-                    size=len(content),
-                    sha256=sha256(content).hexdigest(),
-                )
-                for path, content in outputs.items()
-            ],
+            status=JobStatus.COMPLETED,
+            artifacts=artifacts,
         )
         return session.result.model_copy(deep=True)
 
-    def _execute(self, name: str, script: WorkerScript) -> dict[str, bytes]:
+    def _execute(self, name: str, script: WorkerScript) -> list[Artifact]:
         marker = f"GPU_AI_COMPLETE_{uuid4().hex}"
         timeout = self._settings.max_runtime_seconds
         with TemporaryDirectory() as directory:
             worker = Path(directory) / "worker.py"
             worker.write_text(
+                "import json, mimetypes\n"
+                "from hashlib import file_digest\n"
+                "from pathlib import Path\n"
                 "from zipfile import ZipFile\n"
                 "with ZipFile('gpu-ai-inputs.zip') as bundle:\n"
                 "    bundle.extractall()\n"
                 f"exec(compile({script.source!r}, '<colab-worker>', 'exec'),"
                 " {'__name__': '__main__'})\n"
-                "with ZipFile('/content/gpu-ai-outputs.zip', 'w') as bundle:\n"
+                "root = Path('/content/').resolve()\n"
+                "manifest = []\n"
+                "total = 0\n"
+                "with ZipFile(root / 'gpu-ai-outputs.zip', 'w') as bundle:\n"
                 f"    for path in {script.artifacts!r}:\n"
-                "        bundle.write('/content/' + path, path)\n"
-                f"print({marker!r})\n",
+                "        file = root / path\n"
+                "        if file.resolve() != file or not file.is_file():\n"
+                "            raise ValueError('artifact must be a regular file')\n"
+                "        metadata = file.stat()\n"
+                "        total += metadata.st_size\n"
+                f"        if total > {self._settings.max_artifact_bytes} or metadata.st_nlink != 1:\n"
+                "            raise ValueError('artifact limit exceeded or file is linked')\n"
+                "        with file.open('rb') as source:\n"
+                "            digest = file_digest(source, 'sha256').hexdigest()\n"
+                "        mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'\n"
+                "        manifest.append(dict(path=path, size=metadata.st_size, "
+                "sha256=digest, mime_type=mime))\n"
+                "        bundle.write(file, path)\n"
+                "    manifest_json = json.dumps(manifest)\n"
+                f"    if len(manifest_json) > {MAX_MANIFEST_BYTES}:\n"
+                "        raise ValueError('artifact manifest exceeds size limit')\n"
+                f"    bundle.writestr({TRANSFER_MANIFEST!r}, manifest_json)\n"
+                f"print({(marker + ' ')!r} + manifest_json)\n",
                 encoding="utf-8",
             )
             output = self._run(
@@ -389,23 +401,57 @@ class ColabCLIBackend:
                 str(timeout),
                 timeout=timeout,
             )
-            if marker not in output.splitlines():
-                raise ColabCLIError(ErrorCode.COMMAND_FAILED, "exec")
-
-            self._sessions[name].status = JobStatus.DOWNLOADING
-            archive = Path(directory) / "outputs.zip"
-            self._run(name, "download", "content/gpu-ai-outputs.zip", str(archive))
-            try:
-                with ZipFile(archive) as bundle:
-                    return {path: bundle.read(path) for path in script.artifacts}
-            except (OSError, KeyError, BadZipFile):
-                raise ColabCLIError(ErrorCode.INVALID_RESPONSE, "download") from None
+        prefix = marker + " "
+        manifests = [
+            line[len(prefix) :]
+            for line in output.splitlines()
+            if line.startswith(prefix)
+        ]
+        if not manifests:
+            raise ColabCLIError(ErrorCode.COMMAND_FAILED, "exec")
+        try:
+            if len(manifests) != 1 or len(manifests[0]) > MAX_MANIFEST_BYTES:
+                raise ValueError("invalid execution manifest")
+            manifest = json.loads(manifests[0])
+            if not isinstance(manifest, list) or len(manifest) != len(script.artifacts):
+                raise ValueError("invalid execution manifest")
+            artifacts = [Artifact.model_validate(item) for item in manifest]
+            if tuple(item.path for item in artifacts) != script.artifacts:
+                raise ValueError("unexpected artifacts in execution manifest")
+            if sum(item.size for item in artifacts) > self._settings.max_artifact_bytes:
+                raise ValueError("output exceeds configured limits")
+        except ValueError:
+            raise ColabCLIError(ErrorCode.INVALID_RESPONSE, "exec") from None
+        return artifacts
 
     def download(self, session_id: str) -> dict[str, bytes]:
         session = self._sessions[session_id]
         if session.result is None:
             raise RuntimeError("job has not completed")
-        return session.outputs.copy()
+        if session.outputs is not None:
+            return session.outputs.copy()
+        self._active(session_id)
+        try:
+            with TemporaryDirectory() as directory:
+                archive = Path(directory) / "outputs.zip"
+                self._run(
+                    session_id, "download", "content/gpu-ai-outputs.zip", str(archive)
+                )
+                expected = tuple(item.path for item in session.result.artifacts)
+                artifacts, outputs = read_transfer_archive(
+                    archive, expected, max_bytes=self._settings.max_artifact_bytes
+                )
+                if artifacts != session.result.artifacts:
+                    raise ValueError("execution and download manifests differ")
+        except ColabCLIError:
+            session.status = JobStatus.FAILED
+            raise
+        except (OSError, ValueError, RuntimeError, BadZipFile):
+            session.status = JobStatus.FAILED
+            raise ColabCLIError(ErrorCode.INVALID_RESPONSE, "download") from None
+        session.outputs = outputs
+        session.status = JobStatus.COMPLETED
+        return outputs.copy()
 
     def status(self, session_id: str) -> JobStatus:
         session = self._sessions[session_id]
@@ -430,7 +476,7 @@ class ColabCLIBackend:
         session.cleanup = self._stop_cli(session_id, session.config)
         if session.cleanup != CleanupStatus.CONFIRMED:
             session.status = JobStatus.CLEANUP_PENDING
-        elif session.result is not None:
+        elif session.outputs is not None:
             session.status = JobStatus.COMPLETED
         elif session.status not in (JobStatus.FAILED, JobStatus.CLEANUP_PENDING):
             session.status = JobStatus.CANCELLED

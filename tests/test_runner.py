@@ -25,7 +25,8 @@ def request_data():
 @pytest.fixture
 def runner(tmp_path):
     return JobRunner(
-        MockBackend({"result.txt": b"output"}), Settings(workspace=tmp_path)
+        MockBackend({"result.txt": b"output"}),
+        Settings(workspace=tmp_path, results_dir=tmp_path / "results"),
     )
 
 
@@ -98,7 +99,7 @@ def test_auth_failure_precedes_new(tmp_path, monkeypatch):
         commands.append(args[4])
         return subprocess.CompletedProcess(args, 1, "", "invalid_grant")
 
-    settings = Settings(workspace=tmp_path)
+    settings = Settings(workspace=tmp_path, results_dir=tmp_path / "results")
     request = TaskRequest(operation=Operation.LLM_INFER)
     backend = ColabCLIBackend(
         {request.operation: WorkerScript("", ())}, settings=settings
@@ -201,7 +202,7 @@ def test_concurrent_runners_share_a_gpu_lock(runner, request_data, monkeypatch):
 
 
 def test_restart_recovery_uses_only_owned_session(tmp_path, monkeypatch):
-    settings = Settings(workspace=tmp_path)
+    settings = Settings(workspace=tmp_path, results_dir=tmp_path / "results")
     created = JobRunner(ColabCLIBackend({}, settings=settings), settings)
     task = TaskRequest(operation=Operation.LLM_INFER)
     owned = "gpu-ai-" + "a" * 32

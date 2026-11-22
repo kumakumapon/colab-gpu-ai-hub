@@ -16,6 +16,8 @@ class Settings(Contract):
     gpu: GPU = GPU.T4
     max_concurrent_jobs: int = Field(default=1, ge=1, le=1)
     max_input_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
+    max_artifact_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
+    max_media_duration_seconds: float = Field(default=300, gt=0)
     max_runtime_seconds: int = Field(default=1800, gt=0)
 
     @field_validator("workspace", "results_dir", mode="before")

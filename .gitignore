@@ -25,3 +25,5 @@ weights/
 *.pdf
 
 .colab-cli/
+
+.gpu-ai-jobs/

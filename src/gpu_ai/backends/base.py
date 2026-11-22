@@ -1,10 +1,13 @@
 """Backend contract and an in-memory implementation for GPU-free tests."""
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Protocol
 
 from gpu_ai.contracts import Artifact, CleanupStatus, JobResult, JobStatus, TaskRequest
+
+job_deadline: ContextVar[float | None] = ContextVar("job_deadline", default=None)
 
 
 class Backend(Protocol):
@@ -14,6 +17,13 @@ class Backend(Protocol):
     def download(self, session_id: str) -> dict[str, bytes]: ...
     def status(self, session_id: str) -> JobStatus: ...
     def stop(self, session_id: str) -> CleanupStatus: ...
+
+
+class ManagedBackend(Backend, Protocol):
+    recovery_key: str
+
+    def provision_owned(self, request: TaskRequest, session_id: str) -> str: ...
+    def recover_owned(self, session_id: str) -> CleanupStatus: ...
 
 
 @dataclass
@@ -26,6 +36,8 @@ class _Session:
 
 
 class MockBackend:
+    recovery_key = "mock"
+
     def __init__(self, outputs: dict[str, bytes] | None = None) -> None:
         self._outputs = dict(outputs or {})
         self._artifacts = [
@@ -40,7 +52,9 @@ class MockBackend:
         self._sessions: dict[str, _Session] = {}
 
     def provision(self, request: TaskRequest) -> str:
-        session_id = str(request.job_id)
+        return self.provision_owned(request, str(request.job_id))
+
+    def provision_owned(self, request: TaskRequest, session_id: str) -> str:
         session = self._sessions.get(session_id)
         if session is None:
             self._sessions[session_id] = _Session(request.model_copy(deep=True))
@@ -87,6 +101,11 @@ class MockBackend:
         else:
             session.result.cleanup_status = CleanupStatus.CONFIRMED
         return CleanupStatus.CONFIRMED
+
+    def recover_owned(self, session_id: str) -> CleanupStatus:
+        if session_id not in self._sessions:
+            return CleanupStatus.CONFIRMED
+        return self.stop(session_id)
 
     def _active_session(self, session_id: str) -> _Session:
         session = self._sessions[session_id]

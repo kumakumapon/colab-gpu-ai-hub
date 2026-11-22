@@ -50,6 +50,7 @@ class JobRunner:
         *,
         cancel: Event | None = None,
         save_results: ResultSink | None = None,
+        queued: Event | None = None,
     ) -> JobResult:
         """Run a request once. An identical job ID returns the recorded result."""
         request = TaskRequest.model_validate(request.model_dump())
@@ -79,6 +80,8 @@ class JobRunner:
                 updated_at=now,
             )
             self._advance(record, JobStatus.QUEUED)
+            if queued is not None:
+                queued.set()
             return self._run(record, request, files, cancel, save_results)
 
     def _run(
@@ -95,8 +98,13 @@ class JobRunner:
         outcome = JobResult(job_id=request.job_id, status=JobStatus.FAILED)
         stage = "input_validation"
 
+        def cancelled() -> bool:
+            return (
+                cancel is not None and cancel.is_set()
+            ) or self.ledger.cancellation_requested(request.job_id)
+
         def checkpoint() -> None:
-            if cancel is not None and cancel.is_set():
+            if cancelled():
                 raise _Cancelled
             if monotonic() >= deadline:
                 raise _DeadlineExceeded
@@ -176,7 +184,7 @@ class JobRunner:
             outcome.status = JobStatus.FAILED
             outcome.error = "wall_clock_timeout"
         except Exception as error:  # noqa: BLE001 - backend and sink boundary.
-            if cancel is not None and cancel.is_set():
+            if cancelled():
                 outcome.status = JobStatus.CANCELLED
                 outcome.error = "cancelled"
             elif monotonic() >= deadline:

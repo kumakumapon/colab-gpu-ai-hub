@@ -61,6 +61,20 @@ class JobLedger:
             return None
         return JobRecord.model_validate_json(data)
 
+    def request_cancel(self, job_id: UUID) -> JobRecord:
+        record = self.get(job_id)
+        if record is None:
+            raise LookupError("job_not_found")
+        if record.status not in FINAL_STATES | {
+            JobStatus.CLEANUP_PENDING,
+            JobStatus.STOPPING,
+        }:
+            (self.directory / f"{job_id}.cancel").touch(mode=0o600)
+        return record
+
+    def cancellation_requested(self, job_id: UUID) -> bool:
+        return (self.directory / f"{job_id}.cancel").is_file()
+
     def unfinished(self) -> Iterator[JobRecord]:
         for path in sorted(self.directory.glob("*.json")):
             record = JobRecord.model_validate_json(path.read_bytes())

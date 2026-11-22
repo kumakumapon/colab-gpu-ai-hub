@@ -8,7 +8,7 @@ license = {text = "MIT"}
 dependencies = ["pydantic>=2.10,<3"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.9", "numpy>=1.26,<3", "pillow>=11,<13"]
+dev = ["pytest>=8", "ruff>=0.9", "numpy>=1.26,<3", "pillow>=11,<14"]
 
 [build-system]
 requires = ["hatchling"]

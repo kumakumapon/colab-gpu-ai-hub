@@ -38,7 +38,7 @@ GPU を確保するコマンドは、利用を許可したジョブで実行し�
 | [PaddleOCR](docs/workers/ocr.md) | JPEG・PNG・PDF → OCR JSON・任意の Markdown | 確認済み |
 | [画像生成](docs/workers/image_gen.md) | テキスト → 画像と生成条件 | 確認済み |
 | [SAM 2.1](docs/workers/sam2.md) | 点・矩形と画像・動画 → マスク・追跡 | 確認済み |
-| [動画統合](docs/workers/video.md) | MP4 → 字幕・タイムライン・推定レポート | CPU 模擬で確認済み |
+| [動画統合](docs/workers/video.md) | MP4 → 字幕・タイムライン・推定レポート | T4 で確認済み（合成動画） |
 
 LLM の生成文と SAM 2.1 の追跡はモデルによる推定です。相対深度に物理距離の単位はありません。詳細は [共通契約](docs/contracts.md)、[セキュリティ](docs/security.md)、[ライセンス](docs/licensing.md) を参照してください。
 

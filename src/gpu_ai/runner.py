@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from threading import Event
 from time import monotonic
 from uuid import uuid4
@@ -12,9 +13,15 @@ from gpu_ai.artifacts import ArtifactStore, verify_artifacts
 from gpu_ai.backends.base import ManagedBackend, job_deadline
 from gpu_ai.backends.colab_cli import ColabCLIError
 from gpu_ai.config import Settings
-from gpu_ai.contracts import CleanupStatus, JobResult, JobStatus, TaskRequest
+from gpu_ai.contracts import CleanupStatus, JobResult, JobStatus, Operation, TaskRequest
 from gpu_ai.jobs import FINAL_STATES, JobBusy, JobLedger, JobRecord
-from gpu_ai.media.validate import load_media, validate_transfer_path
+from gpu_ai.media.validate import (
+    MediaInfo,
+    load_media,
+    read_file,
+    validate_transfer_path,
+)
+from gpu_ai.workers.llm import MAX_PROMPT_BYTES, decode_prompt
 
 ResultSink = Callable[[JobResult, dict[str, bytes], dict[str, str]], None]
 
@@ -96,6 +103,18 @@ class JobRunner:
 
         try:
             checkpoint()
+            prompt_path = (
+                request.inputs[0]
+                if request.operation is Operation.LLM_INFER
+                and len(request.inputs) == 1
+                and Path(request.inputs[0]).suffix.lower() == ".txt"
+                else None
+            )
+            if files is None and prompt_path is not None:
+                limit = min(self.settings.max_input_bytes, MAX_PROMPT_BYTES)
+                files = {
+                    prompt_path: read_file(self.settings.workspace, prompt_path, limit)
+                }
             if files is None:
                 files, media = load_media(
                     self.settings.workspace,
@@ -106,6 +125,9 @@ class JobRunner:
             else:
                 files = self._validate_inputs(request, files)
                 media = {}
+                if prompt_path is not None:
+                    decode_prompt(files[prompt_path])
+                    media[prompt_path] = MediaInfo("text/plain")
             record.input_hashes = {
                 path: sha256(data).hexdigest() for path, data in files.items()
             }

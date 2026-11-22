@@ -3,13 +3,14 @@
 from gpu_ai.backends.colab_cli import WorkerScript
 from gpu_ai.contracts import Operation
 
-from . import depth, whisper
+from . import depth, llm, whisper
 from ._scripts import build_script
 
 
 def colab_worker_scripts() -> dict[Operation, WorkerScript]:
     """Build the application-owned workers accepted by ColabCLIBackend."""
     return {
+        Operation.LLM_INFER: build_script("llm", llm.ARTIFACTS, llm.validate_request),
         Operation.ESTIMATE_DEPTH: build_script(
             "depth",
             (),

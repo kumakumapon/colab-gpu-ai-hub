@@ -1,5 +1,6 @@
 import json
 import sys
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pypdfium2
@@ -27,6 +28,7 @@ def write_pdf(path, count=2, size=(115, 86)):
 def fake_ocr(monkeypatch):
     calls = []
     monkeypatch.setattr(ocr, "ensure_packages", lambda pins, **kwargs: pins.copy())
+    monkeypatch.setattr(ocr.platform, "machine", lambda: "test")
 
     class OCR:
         def __init__(self, **options):
@@ -162,3 +164,89 @@ def test_invalid_pdf_is_rejected(tmp_path, monkeypatch, variant):
 def test_input_options(inputs, parameters):
     with pytest.raises(WorkerError, match="invalid_worker_input"):
         ocr.options(inputs, parameters)
+
+
+def test_paddle_wheel_requires_exact_ranges_and_digest(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
+    payload = b"official wheel fixture"
+    chunk = 7
+    monkeypatch.setattr(ocr, "COLAB_WHEEL_SIZE", len(payload))
+    monkeypatch.setattr(ocr, "WHEEL_CHUNK_SIZE", chunk)
+    monkeypatch.setattr(ocr, "COLAB_WHEEL_SHA256", sha256(payload).hexdigest())
+    requests = []
+
+    def read_range(request, *, timeout):
+        interval = request.get_header("Range").removeprefix("bytes=")
+        start, end = map(int, interval.split("-"))
+        requests.append(start)
+        assert request.full_url == ocr.COLAB_WHEEL_URL and timeout == 25
+        return nullcontext(
+            SimpleNamespace(
+                status=206,
+                headers={"Content-Range": f"bytes {start}-{end}/{len(payload)}"},
+                read=lambda size: payload[start : end + 1][:size],
+            )
+        )
+
+    monkeypatch.setattr(ocr, "urlopen", read_range)
+    target = tmp_path / "paddle.whl"
+    ocr._download_wheel(target)
+    assert target.read_bytes() == payload
+    assert sorted(requests) == list(range(0, len(payload), chunk))
+
+    monkeypatch.setattr(ocr, "COLAB_WHEEL_SHA256", "bad-digest")
+    with pytest.raises(ValueError, match="digest mismatch"):
+        ocr._download_wheel(tmp_path / "tampered.whl")
+
+
+def test_paddle_wheel_rejects_mismatched_range(monkeypatch):
+    from contextlib import nullcontext
+
+    calls = []
+
+    def read_range(request, *, timeout):
+        calls.append(request.get_header("Range"))
+        return nullcontext(
+            SimpleNamespace(status=206, headers={"Content-Range": "bytes 5-9/10"})
+        )
+
+    monkeypatch.setattr(ocr, "COLAB_WHEEL_SIZE", 10)
+    monkeypatch.setattr(ocr, "WHEEL_CHUNK_SIZE", 5)
+    monkeypatch.setattr(ocr, "urlopen", read_range)
+    with pytest.raises(OSError, match="range could not be retrieved"):
+        ocr._wheel_chunk(0)
+    assert calls == ["bytes=0-4"] * 3
+
+
+def test_colab_installs_verified_gpu_wheel_in_isolated_environment(monkeypatch):
+    from pathlib import Path
+
+    calls = []
+
+    def download(wheel):
+        assert wheel.name == ocr.COLAB_WHEEL
+        wheel.write_bytes(b"verified")
+        calls.append("download")
+
+    def run(args, **kwargs):
+        assert kwargs["check"]
+        if args[3] == "venv":
+            calls.append("venv")
+        elif args[3:6] == ["pip", "install", "--python"]:
+            assert args[6].endswith("/venv/bin/python")
+            assert args[7].endswith(ocr.COLAB_WHEEL)
+            assert "paddleocr==3.6.0" in args[8:]
+            calls.append("install")
+        else:
+            assert args[0].endswith("/venv/bin/python") and args[1] == "-c"
+            assert kwargs["env"]["PYTHONNOUSERSITE"] == "1"
+            assert len(kwargs["env"]["PYTHONPATH"].split(":")) == 1
+            Path(args[4]).write_text('{"metrics":{"device":"cuda"}}')
+            calls.append("recognize")
+
+    monkeypatch.setattr(ocr, "ensure_packages", lambda pins: calls.append(pins))
+    monkeypatch.setattr(ocr, "_download_wheel", download)
+    monkeypatch.setattr(ocr.subprocess, "run", run)
+    assert ocr._run_isolated() == {"device": "cuda"}
+    assert calls == [{"uv": ocr.UV_VERSION}, "venv", "download", "install", "recognize"]

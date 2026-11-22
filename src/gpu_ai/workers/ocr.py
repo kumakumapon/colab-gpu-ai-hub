@@ -1,11 +1,20 @@
 """Bounded image and PDF recognition with the PP-OCRv5 mobile models."""
 
+import json
 import math
+import os
+import platform
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from hashlib import sha256
+from http.client import HTTPException
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from urllib.request import Request, urlopen
 
 from ._runtime import (
     WorkerError,
@@ -24,6 +33,15 @@ PINS = {
 }
 PADDLE_VERSION = "3.3.1"
 PADDLE_CUDA_INDEX = "https://www.paddlepaddle.org.cn/packages/stable/cu126/"
+COLAB_WHEEL = "paddlepaddle_gpu-3.3.1-cp313-cp313-linux_x86_64.whl"
+COLAB_WHEEL_URL = (
+    "https://paddle-whl.cdn.bcebos.com/stable/cu126/paddlepaddle-gpu/" + COLAB_WHEEL
+)
+COLAB_WHEEL_SIZE = 2_021_397_999
+COLAB_WHEEL_SHA256 = "d3116dac42e3bfa024aed3a4f8344dd46df28695d7b35ce5ffff964a50d21aed"
+WHEEL_CHUNK_SIZE = 16 * 1024**2
+WHEEL_DOWNLOAD_WORKERS = 8
+UV_VERSION = "0.11.21"
 DETECTOR = "PP-OCRv5_mobile_det"
 RECOGNIZERS = {"ja": "PP-OCRv5_mobile_rec", "en": "en_PP-OCRv5_mobile_rec"}
 MAX_PAGES = 8
@@ -265,12 +283,151 @@ def write_markdown(pages: list[dict]) -> None:
     Path("ocr.md").write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 
 
+def _wheel_chunk(start: int) -> bytes:
+    end = min(COLAB_WHEEL_SIZE, start + WHEEL_CHUNK_SIZE) - 1
+    size = end - start + 1
+    request = Request(COLAB_WHEEL_URL, headers={"Range": f"bytes={start}-{end}"})
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=25) as response:
+                if (
+                    response.status != 206
+                    or response.headers.get("Content-Range")
+                    != f"bytes {start}-{end}/{COLAB_WHEEL_SIZE}"
+                ):
+                    raise OSError("invalid wheel range")
+                data = response.read(size + 1)
+            if len(data) != size:
+                raise OSError("incomplete wheel range")
+            return data
+        except (OSError, HTTPException):
+            if attempt == 2:
+                raise OSError("wheel range could not be retrieved") from None
+    raise AssertionError("unreachable download attempt")
+
+
+def _download_wheel(wheel: Path) -> None:
+    digest = sha256()
+    offsets = range(0, COLAB_WHEEL_SIZE, WHEEL_CHUNK_SIZE)
+    with (
+        wheel.open("xb") as output,
+        ThreadPoolExecutor(max_workers=WHEEL_DOWNLOAD_WORKERS) as pool,
+    ):
+        for batch in range(0, len(offsets), WHEEL_DOWNLOAD_WORKERS):
+            for data in pool.map(
+                _wheel_chunk, offsets[batch : batch + WHEEL_DOWNLOAD_WORKERS]
+            ):
+                output.write(data)
+                digest.update(data)
+    if digest.hexdigest() != COLAB_WHEEL_SHA256:
+        raise ValueError("wheel digest mismatch")
+
+
+# The child imports the same packaged worker but has its own site-packages.
+_ISOLATED_ENTRY = """
+import sys
+from importlib import import_module
+
+worker = import_module(sys.argv[1])
+packages = {**worker.PINS, "paddlepaddle-gpu": worker.PADDLE_VERSION, "uv": worker.UV_VERSION}
+try:
+    metrics = worker._recognize(
+        worker.options(*worker.request_fields()), packages,
+        float(sys.argv[3]), float(sys.argv[4]),
+    )
+    report = {"metrics": metrics}
+except worker.WorkerError as error:
+    report = {"error": error.code}
+worker.write_json(sys.argv[2], report)
+"""
+
+
+def _run_isolated() -> dict:
+    ensure_packages({"uv": UV_VERSION})
+    uv = [sys.executable, "-m", "uv"]
+    quiet = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    with TemporaryDirectory(prefix="gpu-ai-paddle-wheel-") as directory:
+        root = Path(directory)
+        wheel = root / COLAB_WHEEL
+        venv = root / "venv"
+        python = venv / "bin" / "python"
+        try:
+            subprocess.run(
+                [*uv, "venv", "--python", sys.executable, str(venv)],
+                timeout=60,
+                check=True,
+                **quiet,
+            )
+            started = perf_counter()
+            _download_wheel(wheel)
+            download_ms = (perf_counter() - started) * 1000
+            started = perf_counter()
+            pins = [f"{package}=={release}" for package, release in PINS.items()]
+            subprocess.run(
+                [*uv, "pip", "install", "--python", str(python), str(wheel), *pins],
+                timeout=420,
+                check=True,
+                **quiet,
+            )
+            install_ms = (perf_counter() - started) * 1000
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise WorkerError("worker_dependencies") from None
+
+        report = root / "report.json"
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(
+            Path(__file__).resolve().parents[__name__.count(".")]
+        )
+        environment["PYTHONNOUSERSITE"] = "1"
+        try:
+            subprocess.run(
+                [
+                    str(python),
+                    "-c",
+                    _ISOLATED_ENTRY,
+                    __name__,
+                    str(report),
+                    str(download_ms),
+                    str(install_ms),
+                ],
+                env=environment,
+                check=True,
+                **quiet,
+            )
+            result = json.loads(report.read_text(encoding="utf-8"))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise WorkerError("worker_failed") from None
+        if "error" in result:
+            raise WorkerError(result["error"])
+        return result["metrics"]
+
+
 def run() -> dict:
     settings = options(*request_fields())
+    if (
+        settings.device == "cuda"
+        and sys.version_info[:2] == (3, 13)
+        and sys.platform == "linux"
+        and platform.machine() == "x86_64"
+    ):
+        return _run_isolated()
     software = ensure_packages(PINS)
     requested = "paddlepaddle-gpu" if settings.device == "cuda" else "paddlepaddle"
     index = PADDLE_CUDA_INDEX if requested == "paddlepaddle-gpu" else None
     software.update(ensure_packages({requested: PADDLE_VERSION}, index_url=index))
+    return _recognize(settings, software)
+
+
+def _recognize(
+    settings: Options,
+    software: dict[str, str],
+    wheel_download_ms: float | None = None,
+    paddle_install_ms: float | None = None,
+) -> dict:
     try:
         import paddle
         from paddleocr import PaddleOCR
@@ -314,6 +471,8 @@ def run() -> dict:
         "cpu_fallback": fallback is not None,
         "fallback_reason": fallback,
         "paddle_cuda_version": str(paddle.version.cuda()) if device == "cuda" else None,
+        "wheel_download_time_ms": wheel_download_ms,
+        "paddle_install_time_ms": paddle_install_ms,
         "model_load_time_ms": load_ms,
         "inference_time_ms": sum(page["inference_time_ms"] for page in pages),
         "processing_time_ms": (perf_counter() - started) * 1000,

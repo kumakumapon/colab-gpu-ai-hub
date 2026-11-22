@@ -40,7 +40,9 @@ def fake_sam2(monkeypatch):
                 "video_storage_device": "cpu",
                 "dtype": "fp32",
             }
-            return SimpleNamespace(video=video, obj_ids=[])
+            return SimpleNamespace(
+                video=video, obj_ids=[], pending=set(), conditioned=set()
+            )
 
         def add_inputs_to_inference_session(
             self, *, inference_session, frame_idx, obj_ids, **kwargs
@@ -52,6 +54,7 @@ def fake_sam2(monkeypatch):
             )
             prompts.append((obj_ids, kwargs))
             inference_session.obj_ids.append(obj_ids)
+            inference_session.pending = {obj_ids}
 
         def post_process_masks(self, masks, *, original_sizes, binarize):
             assert binarize
@@ -76,7 +79,16 @@ def fake_sam2(monkeypatch):
         def eval(self):
             return self
 
+        def __call__(self, *, inference_session, frame_idx):
+            assert frame_idx == 0
+            assert set(inference_session.obj_ids) == (
+                inference_session.conditioned | inference_session.pending
+            )
+            inference_session.conditioned.update(inference_session.pending)
+            inference_session.pending.clear()
+
         def propagate_in_video_iterator(self, session, *, start_frame_idx):
+            assert session.conditioned == set(session.obj_ids)
             assert start_frame_idx == 0
             for index, frame in enumerate(session.video):
                 masks = np.zeros(

@@ -8,11 +8,13 @@ from threading import Event
 from time import monotonic
 from uuid import uuid4
 
+from gpu_ai.artifacts import ArtifactStore, verify_artifacts
 from gpu_ai.backends.base import ManagedBackend, job_deadline
 from gpu_ai.backends.colab_cli import ColabCLIError
 from gpu_ai.config import Settings
 from gpu_ai.contracts import CleanupStatus, JobResult, JobStatus, TaskRequest
 from gpu_ai.jobs import FINAL_STATES, JobBusy, JobLedger, JobRecord
+from gpu_ai.media.validate import load_media, validate_transfer_path
 
 ResultSink = Callable[[JobResult, dict[str, bytes], dict[str, str]], None]
 
@@ -25,24 +27,14 @@ class _DeadlineExceeded(Exception):
     pass
 
 
-def verify_artifacts(result: JobResult, outputs: dict[str, bytes]) -> None:
-    declared = {artifact.path: artifact for artifact in result.artifacts}
-    if len(declared) != len(result.artifacts) or declared.keys() != outputs.keys():
-        raise ValueError("downloaded artifacts do not match the manifest")
-    for path, content in outputs.items():
-        artifact = declared[path]
-        if (
-            len(content) != artifact.size
-            or sha256(content).hexdigest() != artifact.sha256
-        ):
-            raise ValueError("downloaded artifact failed integrity verification")
-
-
 class JobRunner:
     def __init__(self, backend: ManagedBackend, settings: Settings | None = None):
         self.backend = backend
         self.settings = settings or Settings()
         self.ledger = JobLedger(self.settings.workspace)
+        self.artifacts = ArtifactStore(
+            self.settings.results_dir, max_bytes=self.settings.max_artifact_bytes
+        )
 
     def run(
         self,
@@ -80,17 +72,18 @@ class JobRunner:
                 updated_at=now,
             )
             self._advance(record, JobStatus.QUEUED)
-            return self._run(record, request, files or {}, cancel, save_results)
+            return self._run(record, request, files, cancel, save_results)
 
     def _run(
         self,
         record: JobRecord,
         request: TaskRequest,
-        files: dict[str, bytes],
+        files: dict[str, bytes] | None,
         cancel: Event | None,
         save_results: ResultSink | None,
     ) -> JobResult:
-        deadline = monotonic() + self.settings.max_runtime_seconds
+        started = monotonic()
+        deadline = started + self.settings.max_runtime_seconds
         token = job_deadline.set(deadline)
         outcome = JobResult(job_id=request.job_id, status=JobStatus.FAILED)
         stage = "input_validation"
@@ -103,7 +96,16 @@ class JobRunner:
 
         try:
             checkpoint()
-            files = self._validate_inputs(request, files)
+            if files is None:
+                files, media = load_media(
+                    self.settings.workspace,
+                    request.inputs,
+                    max_bytes=self.settings.max_input_bytes,
+                    max_duration_seconds=self.settings.max_media_duration_seconds,
+                )
+            else:
+                files = self._validate_inputs(request, files)
+                media = {}
             record.input_hashes = {
                 path: sha256(data).hexdigest() for path, data in files.items()
             }
@@ -133,10 +135,15 @@ class JobRunner:
             self._advance(record, JobStatus.DOWNLOADING)
             outputs = self.backend.download(session)
             stage = "verify"
+            if sum(map(len, outputs.values())) > self.settings.max_artifact_bytes:
+                raise ValueError("artifact size exceeds max_artifact_bytes")
             verify_artifacts(result, outputs)
             checkpoint()
-            if save_results is not None:
-                stage = "store"
+            result.metrics.setdefault("processing_time_seconds", monotonic() - started)
+            stage = "store"
+            if save_results is None:
+                self.artifacts.save(result, outputs, record.input_hashes, files, media)
+            else:
                 save_results(result, outputs, record.input_hashes)
             outcome = result.model_copy(update={"error": None})
             checkpoint()
@@ -173,6 +180,8 @@ class JobRunner:
             request.inputs
         ):
             raise ValueError("files must match the unique request inputs")
+        for path in files:
+            validate_transfer_path(path)
         if any(not isinstance(content, bytes) for content in files.values()):
             raise ValueError("inputs must be bytes")
         if sum(map(len, files.values())) > self.settings.max_input_bytes:

@@ -1,10 +1,10 @@
 # colab-gpu-ai-hub
 
-Claude Code と Codex から、必要なときに Google Colab の GPU へ推論を委譲するための Python プロジェクトです。現在はジョブの共通スキーマ、設定、ワーカー登録、ローカルの MockBackend が利用できます。
+Claude Code と Codex から、必要なときに Google Colab の GPU へ推論を委譲するための Python プロジェクトです。ジョブの共通スキーマ、Colab CLI アダプター、ジョブ台帳、安全なファイル転送と成果物保存の基盤を提供します。
 
 ## 開発環境
 
-Python 3.11 以上と uv を用意し、リポジトリのルートで実行します。テストは CPU のみで動作し、Google 認証は不要です。
+Python 3.11 以上、uv、FFmpeg（`ffmpeg` と `ffprobe`）を用意し、リポジトリのルートで実行します。テストは CPU のみで動作し、Google 認証は不要です。
 
 ```sh
 uv sync

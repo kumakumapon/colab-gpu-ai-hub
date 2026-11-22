@@ -65,3 +65,23 @@ max_runtime_seconds = 1800
 `cleanup_pending` となり、同じワークスペースでの新規ジョブ開始を保留します。
 Colab CLI 0.8.0 が割当先の ID をディスクに保存する前に割り込まれた場合、
 CLI から所有を確認できないことがあります。その場合は Colab のランタイム管理画面で確認してください。
+
+## 入力ファイルと成果物
+
+`runner.run(request)` は `workspace` 配下の相対パスを検証し、入力を読み込んでから GPU を確保します。
+対応形式は MP3、WAV、MP4、JPEG、PNG、PDF です。音声・動画・画像の形式はファイルの
+シグネチャと `ffprobe` で検証します。PDF はシグネチャと終端を確認します。
+隠しパス、資格情報・キャッシュ用のディレクトリ、リンクを含むパスは拒否します。
+検証済みのデータを持つアプリ内の呼び出し元は、`run(request, files)` でバイト列を渡せます。
+
+`gpu_ai.media.preprocess.preprocess_video(path, settings)` は MP4 から 16 kHz モノラル WAV と
+タイムスタンプ付きの PNG フレームを生成します。タイムスタンプは入力のフレーム PTS に基づきます。
+音声トラックがなければ `audio_wav` は `None` です。前処理には FFmpeg と FFprobe が必要です。
+
+Colab 上で計算した成果物の SHA-256 とサイズをダウンロード後に検証し、
+`results_dir/<job-id>/` に成果物と `gpu-ai-manifest.json` をまとめて公開します。
+マニフェストには各ファイルの相対パス、MIME、サイズ、SHA-256、処理時間、取得できたモデル識別子を
+記録します。既存のジョブ別ディレクトリは上書きされません。GPU の停止状態はジョブ台帳を確認してください。
+
+`max_input_bytes` と `max_artifact_bytes` の既定値はそれぞれ 100 MiB、
+`max_media_duration_seconds` の既定値は 300 秒です。TOML または対応する `GPU_AI_` 環境変数で変更できます。

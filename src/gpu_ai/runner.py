@@ -128,7 +128,11 @@ class JobRunner:
                     self.settings.workspace,
                     request.inputs,
                     max_bytes=self.settings.max_input_bytes,
-                    max_duration_seconds=self.settings.max_media_duration_seconds,
+                    max_duration_seconds=(
+                        min(self.settings.max_media_duration_seconds, 600)
+                        if request.operation == Operation.ANALYZE_VIDEO
+                        else self.settings.max_media_duration_seconds
+                    ),
                 )
             else:
                 files = self._validate_inputs(request, files)

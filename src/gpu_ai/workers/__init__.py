@@ -1,5 +1,7 @@
 """Registered GPU inference workers."""
 
+from pathlib import Path
+
 from gpu_ai.backends.colab_cli import WorkerScript
 from gpu_ai.contracts import Operation
 
@@ -9,7 +11,18 @@ from ._scripts import build_script
 
 def colab_worker_scripts() -> dict[Operation, WorkerScript]:
     """Build the application-owned workers accepted by ColabCLIBackend."""
+    from gpu_ai.pipelines import video
+
     return {
+        Operation.ANALYZE_VIDEO: build_script(
+            "video",
+            video.ARTIFACTS,
+            video.validate_request,
+            additional_modules=("whisper", "depth", "sam2", "llm"),
+            source_path=Path(video.__file__),
+            cuda_libraries=("nvidia-cublas-cu12", "nvidia-cudnn-cu12"),
+            hub_http_downloads=True,
+        ),
         Operation.SEGMENT_OBJECT: build_script(
             "sam2",
             (),

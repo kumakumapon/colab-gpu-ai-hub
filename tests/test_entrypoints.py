@@ -24,6 +24,7 @@ TOOLS = {
     "extract_text",
     "generate_image",
     "segment_object",
+    "analyze_video",
     "estimate_depth",
     "llm_infer",
     "get_job_status",

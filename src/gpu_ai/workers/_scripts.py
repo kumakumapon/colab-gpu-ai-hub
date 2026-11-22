@@ -15,11 +15,17 @@ def build_script(
     *,
     cuda_libraries: tuple[str, ...] = (),
     hub_http_downloads: bool = False,
+    additional_modules: tuple[str, ...] = (),
+    source_path: Path | None = None,
     artifacts_for: Callable[[TaskRequest], tuple[str, ...]] | None = None,
 ) -> WorkerScript:
     directory = Path(__file__).parent
     runtime = (directory / "_runtime.py").read_text(encoding="utf-8")
-    worker = (directory / f"{module}.py").read_text(encoding="utf-8")
+    worker = (source_path or directory / f"{module}.py").read_text(encoding="utf-8")
+    sources = {
+        name: (directory / f"{name}.py").read_text(encoding="utf-8")
+        for name in additional_modules
+    }
     entry = dedent(f"""
         import sys
         from .{module} import run
@@ -48,6 +54,8 @@ def build_script(
             (package / "__main__.py").write_text({entry!r}, encoding="utf-8")
             (package / "_runtime.py").write_text({runtime!r}, encoding="utf-8")
             (package / "{module}.py").write_text({worker!r}, encoding="utf-8")
+            for name, contents in {sources!r}.items():
+                (package / f"{{name}}.py").write_text(contents, encoding="utf-8")
             environment = os.environ.copy()
             if {hub_http_downloads!r}:
                 environment["HF_HUB_DISABLE_XET"] = "1"

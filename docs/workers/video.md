@@ -29,3 +29,12 @@ FFmpeg の `showinfo` で間引き直後の元フレーム PTS と時刻基準�
 
 - [FFmpeg フィルタの公式仕様](https://ffmpeg.org/ffmpeg-filters.html)
 - [FFprobe の公式仕様](https://ffmpeg.org/ffprobe.html)
+
+## T4 実機確認
+
+2026-11-23（JST）に、WSL2 のローカル stdio MCP から2秒の合成 MP4 を送信し、Colab T4 1台で Whisper、深度推定、SAM 2.1、Qwen 要約の全段階が完了しました。ジョブ ID は `594f82f2-dbb1-4f2a-8cff-0f740966b3e3` です。
+
+- MCP で成果物5件のパスを取得し、各ファイルの SHA-256 がマニフェストと一致することを確認しました。
+- 自動停止は `cleanup_status=confirmed` で、停止後の Colab ランタイム一覧は0件でした。
+- ジョブの処理時間は約151秒、試験全体は約161秒でした。
+- 入力音声は合成トーンで、文字起こし段階は完了し、発話区間0件の空の SRT が保存されました。

@@ -187,15 +187,29 @@ class WorkerScript:
     source: str
     artifacts: tuple[str, ...]
     validate_request: Callable[[TaskRequest], None] | None = None
+    artifacts_for: Callable[[TaskRequest], tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        for path in self.artifacts:
-            validate_transfer_path(path)
-        if len(set(self.artifacts)) != len(self.artifacts):
-            raise ValueError("duplicate artifact paths")
-        if len(self.artifacts) > MAX_ARCHIVE_FILES:
-            raise ValueError("too many declared artifacts")
+        self._validate_artifacts(self.artifacts)
         compile(self.source, "<colab-worker>", "exec")
+
+    def output_paths(self, request: TaskRequest) -> tuple[str, ...]:
+        paths = (
+            self.artifacts
+            if self.artifacts_for is None
+            else self.artifacts_for(request)
+        )
+        self._validate_artifacts(paths)
+        return paths
+
+    @staticmethod
+    def _validate_artifacts(paths: tuple[str, ...]) -> None:
+        for path in paths:
+            validate_transfer_path(path)
+        if len(set(paths)) != len(paths):
+            raise ValueError("duplicate artifact paths")
+        if len(paths) > MAX_ARCHIVE_FILES:
+            raise ValueError("too many declared artifacts")
 
 
 @dataclass
@@ -244,6 +258,7 @@ class ColabCLIBackend:
                 validator(request)
             except ValueError:
                 raise ColabCLIError(ErrorCode.INVALID_WORKER_INPUT, "new") from None
+        self._scripts[request.operation].output_paths(request)
         for path in request.inputs:
             validate_transfer_path(path)
         if len(set(request.inputs)) != len(request.inputs):
@@ -374,7 +389,8 @@ class ColabCLIBackend:
         script = self._scripts[request.operation]
         session.status = JobStatus.RUNNING
         try:
-            artifacts, metrics = self._execute(session_id, script)
+            paths = script.output_paths(request)
+            artifacts, metrics = self._execute(session_id, script.source, paths)
         except ColabCLIError:
             session.status = JobStatus.FAILED
             raise
@@ -388,7 +404,7 @@ class ColabCLIBackend:
         return session.result.model_copy(deep=True)
 
     def _execute(
-        self, name: str, script: WorkerScript
+        self, name: str, source: str, paths: tuple[str, ...]
     ) -> tuple[list[Artifact], dict[str, JsonValue]]:
         prefix = f"GPU_AI_COMPLETE_{uuid4().hex} "
         timeout = self._settings.max_runtime_seconds
@@ -405,7 +421,7 @@ class ColabCLIBackend:
                 with ZipFile('gpu-ai-inputs.zip') as bundle:
                     bundle.extractall()
                 namespace = {{'__name__': '__main__'}}
-                exec(compile({script.source!r}, '<colab-worker>', 'exec'), namespace)
+                exec(compile({source!r}, '<colab-worker>', 'exec'), namespace)
                 error = namespace.get('gpu_ai_error')
                 if error:
                     print({prefix!r} + json.dumps({{'error': error}}))
@@ -414,7 +430,7 @@ class ColabCLIBackend:
                     manifest = []
                     total = 0
                     with ZipFile(root / 'gpu-ai-outputs.zip', 'w') as bundle:
-                        for path in {script.artifacts!r}:
+                        for path in {paths!r}:
                             file = root / path
                             if file.resolve() != file or not file.is_file():
                                 raise ValueError('artifact must be a regular file')
@@ -470,11 +486,11 @@ class ColabCLIBackend:
             if (
                 not isinstance(metrics, dict)
                 or not isinstance(manifest, list)
-                or len(manifest) != len(script.artifacts)
+                or len(manifest) != len(paths)
             ):
                 raise ValueError("invalid execution manifest")
             artifacts = [Artifact.model_validate(item) for item in manifest]
-            if tuple(item.path for item in artifacts) != script.artifacts:
+            if tuple(item.path for item in artifacts) != paths:
                 raise ValueError("unexpected artifacts in execution manifest")
             if sum(item.size for item in artifacts) > self._settings.max_artifact_bytes:
                 raise ValueError("output exceeds configured limits")

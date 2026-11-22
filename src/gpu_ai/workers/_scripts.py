@@ -14,6 +14,7 @@ def build_script(
     validate: Callable[[TaskRequest], None],
     *,
     cuda_libraries: tuple[str, ...] = (),
+    artifacts_for: Callable[[TaskRequest], tuple[str, ...]] | None = None,
 ) -> WorkerScript:
     directory = Path(__file__).parent
     runtime = (directory / "_runtime.py").read_text(encoding="utf-8")
@@ -78,4 +79,4 @@ def build_script(
                 gpu_ai_metrics = report.get("metrics", {{}})
                 gpu_ai_error = report.get("error")
     """)
-    return WorkerScript(source, artifacts, validate)
+    return WorkerScript(source, artifacts, validate, artifacts_for)

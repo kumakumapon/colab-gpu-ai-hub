@@ -66,3 +66,33 @@ def ensure_packages(pins: dict[str, str]) -> dict[str, str]:
         except (OSError, subprocess.CalledProcessError):
             raise WorkerError("worker_dependencies") from None
     return pins.copy()
+
+
+TRANSFORMERS_VERSION = "4.51.3"
+
+
+def cuda_metrics(torch, device: str) -> None:
+    if device == "cuda":
+        if not torch.cuda.is_available():
+            raise WorkerError("cuda_unavailable")
+        torch.cuda.reset_peak_memory_stats()
+
+
+def synchronize(torch, device: str) -> None:
+    if device == "cuda":
+        torch.cuda.synchronize()
+
+
+def peak_memory_mib(torch, device: str) -> float | None:
+    if device == "cuda":
+        return torch.cuda.max_memory_allocated() / (1024 * 1024)
+    return None
+
+
+def torch_failure(torch, error: Exception, fallback: str) -> WorkerError:
+    if (
+        isinstance(error, torch.OutOfMemoryError)
+        or "out of memory" in str(error).lower()
+    ):
+        return WorkerError("out_of_memory")
+    return WorkerError(fallback)

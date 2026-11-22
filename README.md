@@ -15,3 +15,9 @@ uv run pytest -q
 設定と JSON 入出力の例は [共通契約](docs/contracts.md) を参照してください。
 
 Colab CLI の導入と OAuth 診断は [WSL2 セットアップ](docs/setup-wsl2.md) を参照してください。
+
+## MVP ワーカー
+
+- [Whisper 日本語音声認識](docs/workers/whisper.md)
+- [Depth Anything V2 相対深度推定](docs/workers/depth.md)
+- [Qwen テキスト推論](docs/workers/llm.md)

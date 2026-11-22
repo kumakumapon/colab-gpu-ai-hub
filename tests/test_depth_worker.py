@@ -98,6 +98,11 @@ def relative_model(monkeypatch):
             AutoModelForDepthEstimation=Model,
         ),
     )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers.models.dpt.image_processing_pil_dpt",
+        SimpleNamespace(DPTImageProcessorPil=Processor),
+    )
     return groups
 
 

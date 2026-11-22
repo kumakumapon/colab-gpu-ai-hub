@@ -42,7 +42,7 @@ print(result.model_dump_json(indent=2))
 完了とGPU停止、各 `.npy` と元画像のサイズ一致、`inference_time_ms` と
 `peak_vram_mb` を確認します。T4 でのモデル推論・計測は未実施です。
 モデルは Apache-2.0 の Small チェックポイントを固定リビジョンで取得し、
-Colab の PyTorch と Transformers 4.51.3 を使用します。
+Colab の PyTorch、Transformers 5.10.4、Pillow 13.0.0 を使用します。
 
 - [Depth Anything V2 Small モデルカード](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf)
 - [公式前処理設定](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/blob/5426e4f0f36572d16453bbda7a8389317b1bef99/preprocessor_config.json)

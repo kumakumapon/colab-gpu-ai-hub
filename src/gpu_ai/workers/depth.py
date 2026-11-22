@@ -112,13 +112,18 @@ def save_depth(directory: Path, depth, metadata: dict, *, numpy, image_module) -
 
 def run() -> dict:
     settings = options(*request_fields())
-    software = ensure_packages({"transformers": TRANSFORMERS_VERSION})
+    software = ensure_packages(
+        {"transformers": TRANSFORMERS_VERSION, "pillow": "13.0.0"}
+    )
     try:
         import numpy
         import PIL
         import torch
         from PIL import Image
-        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+        from transformers import AutoModelForDepthEstimation
+        from transformers.models.dpt.image_processing_pil_dpt import (
+            DPTImageProcessorPil,
+        )
     except (ImportError, OSError, RuntimeError):
         raise WorkerError("worker_dependencies") from None
     software.update(
@@ -128,11 +133,9 @@ def run() -> dict:
     cuda_metrics(torch, settings.device)
     started = perf_counter()
     try:
-        processor = AutoImageProcessor.from_pretrained(
+        processor = DPTImageProcessorPil.from_pretrained(
             MODEL_ID,
             revision=REVISION,
-            use_fast=False,
-            trust_remote_code=False,
         )
         model = (
             AutoModelForDepthEstimation.from_pretrained(

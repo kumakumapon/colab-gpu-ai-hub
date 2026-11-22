@@ -47,7 +47,14 @@ class JobLedger:
     @contextmanager
     def exclusive(self) -> Iterator[None]:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with (self.directory / "gpu.lock").open("ab") as lock:
+        if self.directory.is_symlink():
+            raise ValueError("job ledger must be a real directory")
+        fd = os.open(
+            self.directory / "gpu.lock",
+            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+        )
+        with os.fdopen(fd, "ab") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -69,11 +76,21 @@ class JobLedger:
             JobStatus.CLEANUP_PENDING,
             JobStatus.STOPPING,
         }:
-            (self.directory / f"{job_id}.cancel").touch(mode=0o600)
+            marker = self.directory / f"{job_id}.cancel"
+            try:
+                fd = os.open(
+                    marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                )
+            except FileExistsError:
+                if marker.is_symlink() or not marker.is_file():
+                    raise ValueError("invalid cancellation marker") from None
+            else:
+                os.close(fd)
         return record
 
     def cancellation_requested(self, job_id: UUID) -> bool:
-        return (self.directory / f"{job_id}.cancel").is_file()
+        marker = self.directory / f"{job_id}.cancel"
+        return not marker.is_symlink() and marker.is_file()
 
     def unfinished(self) -> Iterator[JobRecord]:
         for path in sorted(self.directory.glob("*.json")):

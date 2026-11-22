@@ -259,3 +259,77 @@ def test_colab_cli_timeout_respects_job_deadline(tmp_path, monkeypatch):
     finally:
         job_deadline.reset(token)
     assert caught.value.code == ErrorCode.TIMEOUT
+
+
+@pytest.mark.parametrize(
+    ("command", "diagnostic", "expected", "calls"),
+    [
+        (
+            "sessions",
+            "HTTP 429 too many requests",
+            "provision:rate_limited",
+            ["sessions"],
+        ),
+        (
+            "new",
+            "GPU allocation refused: quota exceeded",
+            "provision:allocation_failed",
+            ["sessions", "new"],
+        ),
+        (
+            "upload",
+            "connection reset during file transfer",
+            "upload:command_failed",
+            ["sessions", "new", "upload", "stop"],
+        ),
+    ],
+)
+def test_colab_failure_codes_and_release(
+    tmp_path, monkeypatch, capsys, caplog, command, diagnostic, expected, calls
+):
+    private = "oauth-secret-fixture"
+    calls_seen = []
+
+    def run(argv, **kwargs):
+        op = argv[4]
+        calls_seen.append(op)
+        assert kwargs["stdin"] is subprocess.DEVNULL
+        if op == command:
+            return subprocess.CompletedProcess(argv, 1, "", f"{diagnostic} {private}")
+        output = {
+            "sessions": "[colab] No active sessions found on server.",
+            "new": "[colab] Session READY.",
+            "stop": "[colab] Session terminated.",
+        }[op]
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    settings = Settings(workspace=tmp_path / "input", results_dir=tmp_path / "results")
+    request = TaskRequest(operation=Operation.LLM_INFER, inputs=["prompt.txt"])
+    backend = ColabCLIBackend(
+        {request.operation: WorkerScript("", ())}, settings=settings
+    )
+    runner = JobRunner(backend, settings)
+    result = runner.run(request, {"prompt.txt": b"hello"})
+    record = runner.ledger.get(request.job_id)
+
+    assert calls_seen == calls
+    assert result.status is JobStatus.FAILED
+    assert result.error == expected
+    assert result.cleanup_status is CleanupStatus.CONFIRMED
+    assert not settings.results_dir.exists()
+    captured = capsys.readouterr()
+    assert (
+        private
+        not in record.model_dump_json() + captured.out + captured.err + caplog.text
+    )
+
+
+def test_linked_job_lock_is_rejected(runner, request_data, tmp_path):
+    target = tmp_path / "other"
+    target.write_bytes(b"unchanged")
+    runner.ledger.directory.mkdir()
+    (runner.ledger.directory / "gpu.lock").symlink_to(target)
+    with pytest.raises(OSError):
+        runner.run(request_data, {"prompt.txt": b"hello"})
+    assert target.read_bytes() == b"unchanged"

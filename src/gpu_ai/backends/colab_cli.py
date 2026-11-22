@@ -3,14 +3,18 @@
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
+from textwrap import dedent
 from threading import Lock
 from time import monotonic
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
+
+from pydantic import JsonValue
 
 from gpu_ai.artifacts import (
     MAX_ARCHIVE_FILES,
@@ -40,6 +44,28 @@ class ErrorCode(StrEnum):
     COMMAND_FAILED = "command_failed"
     SESSION_LOST = "session_lost"
     INVALID_RESPONSE = "invalid_response"
+    INVALID_WORKER_INPUT = "invalid_worker_input"
+    WORKER_DEPENDENCIES = "worker_dependencies"
+    CUDA_UNAVAILABLE = "cuda_unavailable"
+    INCOMPATIBLE_CUDA = "incompatible_cuda"
+    OUT_OF_MEMORY = "out_of_memory"
+    MODEL_DOWNLOAD_FAILED = "model_download_failed"
+    MODEL_LOAD_FAILED = "model_load_failed"
+    WORKER_FAILED = "worker_failed"
+
+
+WORKER_ERROR_CODES = frozenset(
+    {
+        ErrorCode.INVALID_WORKER_INPUT,
+        ErrorCode.WORKER_DEPENDENCIES,
+        ErrorCode.CUDA_UNAVAILABLE,
+        ErrorCode.INCOMPATIBLE_CUDA,
+        ErrorCode.OUT_OF_MEMORY,
+        ErrorCode.MODEL_DOWNLOAD_FAILED,
+        ErrorCode.MODEL_LOAD_FAILED,
+        ErrorCode.WORKER_FAILED,
+    }
+)
 
 
 class ColabCLIError(RuntimeError):
@@ -160,6 +186,7 @@ class WorkerScript:
 
     source: str
     artifacts: tuple[str, ...]
+    validate_request: Callable[[TaskRequest], None] | None = None
 
     def __post_init__(self) -> None:
         for path in self.artifacts:
@@ -211,6 +238,12 @@ class ColabCLIBackend:
         request = TaskRequest.model_validate(request.model_dump())
         if request.operation not in self._scripts:
             raise LookupError("no Colab worker registered for this operation")
+        validator = self._scripts[request.operation].validate_request
+        if validator is not None:
+            try:
+                validator(request)
+            except ValueError:
+                raise ColabCLIError(ErrorCode.INVALID_WORKER_INPUT, "new") from None
         for path in request.inputs:
             validate_transfer_path(path)
         if len(set(request.inputs)) != len(request.inputs):
@@ -341,7 +374,7 @@ class ColabCLIBackend:
         script = self._scripts[request.operation]
         session.status = JobStatus.RUNNING
         try:
-            artifacts = self._execute(session_id, script)
+            artifacts, metrics = self._execute(session_id, script)
         except ColabCLIError:
             session.status = JobStatus.FAILED
             raise
@@ -350,46 +383,58 @@ class ColabCLIBackend:
             job_id=request.job_id,
             status=JobStatus.COMPLETED,
             artifacts=artifacts,
+            metrics=metrics,
         )
         return session.result.model_copy(deep=True)
 
-    def _execute(self, name: str, script: WorkerScript) -> list[Artifact]:
-        marker = f"GPU_AI_COMPLETE_{uuid4().hex}"
+    def _execute(
+        self, name: str, script: WorkerScript
+    ) -> tuple[list[Artifact], dict[str, JsonValue]]:
+        prefix = f"GPU_AI_COMPLETE_{uuid4().hex} "
         timeout = self._settings.max_runtime_seconds
         with TemporaryDirectory() as directory:
             worker = Path(directory) / "worker.py"
             worker.write_text(
-                "import json, mimetypes\n"
-                "from hashlib import file_digest\n"
-                "from pathlib import Path\n"
-                "from zipfile import ZipFile\n"
-                "with ZipFile('gpu-ai-inputs.zip') as bundle:\n"
-                "    bundle.extractall()\n"
-                f"exec(compile({script.source!r}, '<colab-worker>', 'exec'),"
-                " {'__name__': '__main__'})\n"
-                "root = Path('/content/').resolve()\n"
-                "manifest = []\n"
-                "total = 0\n"
-                "with ZipFile(root / 'gpu-ai-outputs.zip', 'w') as bundle:\n"
-                f"    for path in {script.artifacts!r}:\n"
-                "        file = root / path\n"
-                "        if file.resolve() != file or not file.is_file():\n"
-                "            raise ValueError('artifact must be a regular file')\n"
-                "        metadata = file.stat()\n"
-                "        total += metadata.st_size\n"
-                f"        if total > {self._settings.max_artifact_bytes} or metadata.st_nlink != 1:\n"
-                "            raise ValueError('artifact limit exceeded or file is linked')\n"
-                "        with file.open('rb') as source:\n"
-                "            digest = file_digest(source, 'sha256').hexdigest()\n"
-                "        mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'\n"
-                "        manifest.append(dict(path=path, size=metadata.st_size, "
-                "sha256=digest, mime_type=mime))\n"
-                "        bundle.write(file, path)\n"
-                "    manifest_json = json.dumps(manifest)\n"
-                f"    if len(manifest_json) > {MAX_MANIFEST_BYTES}:\n"
-                "        raise ValueError('artifact manifest exceeds size limit')\n"
-                f"    bundle.writestr({TRANSFER_MANIFEST!r}, manifest_json)\n"
-                f"print({(marker + ' ')!r} + manifest_json)\n",
+                dedent(f"""
+                import json
+                import mimetypes
+                from hashlib import file_digest
+                from pathlib import Path
+                from zipfile import ZipFile
+
+                with ZipFile('gpu-ai-inputs.zip') as bundle:
+                    bundle.extractall()
+                namespace = {{'__name__': '__main__'}}
+                exec(compile({script.source!r}, '<colab-worker>', 'exec'), namespace)
+                error = namespace.get('gpu_ai_error')
+                if error:
+                    print({prefix!r} + json.dumps({{'error': error}}))
+                else:
+                    root = Path('/content/').resolve()
+                    manifest = []
+                    total = 0
+                    with ZipFile(root / 'gpu-ai-outputs.zip', 'w') as bundle:
+                        for path in {script.artifacts!r}:
+                            file = root / path
+                            if file.resolve() != file or not file.is_file():
+                                raise ValueError('artifact must be a regular file')
+                            metadata = file.stat()
+                            total += metadata.st_size
+                            if total > {self._settings.max_artifact_bytes} or metadata.st_nlink != 1:
+                                raise ValueError('artifact limit exceeded or file is linked')
+                            with file.open('rb') as source:
+                                digest = file_digest(source, 'sha256').hexdigest()
+                            mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'
+                            manifest.append(dict(path=path, size=metadata.st_size,
+                                                 sha256=digest, mime_type=mime))
+                            bundle.write(file, path)
+                        bundle.writestr({TRANSFER_MANIFEST!r}, json.dumps(manifest))
+                    report = json.dumps(dict(artifacts=manifest,
+                                             metrics=namespace.get('gpu_ai_metrics', {{}})))
+                    if len(report) > {MAX_MANIFEST_BYTES}:
+                        raise ValueError('execution report exceeds size limit')
+                    print({prefix!r} + report)
+                """),
                 encoding="utf-8",
             )
             output = self._run(
@@ -401,7 +446,6 @@ class ColabCLIBackend:
                 str(timeout),
                 timeout=timeout,
             )
-        prefix = marker + " "
         manifests = [
             line[len(prefix) :]
             for line in output.splitlines()
@@ -412,8 +456,22 @@ class ColabCLIBackend:
         try:
             if len(manifests) != 1 or len(manifests[0]) > MAX_MANIFEST_BYTES:
                 raise ValueError("invalid execution manifest")
-            manifest = json.loads(manifests[0])
-            if not isinstance(manifest, list) or len(manifest) != len(script.artifacts):
+            report = json.loads(manifests[0])
+            if isinstance(report, dict):
+                if "error" in report:
+                    code = ErrorCode(report["error"])
+                    if code not in WORKER_ERROR_CODES:
+                        raise ValueError("unknown worker error")
+                    raise ColabCLIError(code, "exec")
+                manifest = report.get("artifacts")
+                metrics = report.get("metrics")
+            else:
+                manifest, metrics = report, {}
+            if (
+                not isinstance(metrics, dict)
+                or not isinstance(manifest, list)
+                or len(manifest) != len(script.artifacts)
+            ):
                 raise ValueError("invalid execution manifest")
             artifacts = [Artifact.model_validate(item) for item in manifest]
             if tuple(item.path for item in artifacts) != script.artifacts:
@@ -422,7 +480,7 @@ class ColabCLIBackend:
                 raise ValueError("output exceeds configured limits")
         except ValueError:
             raise ColabCLIError(ErrorCode.INVALID_RESPONSE, "exec") from None
-        return artifacts
+        return artifacts, metrics
 
     def download(self, session_id: str) -> dict[str, bytes]:
         session = self._sessions[session_id]

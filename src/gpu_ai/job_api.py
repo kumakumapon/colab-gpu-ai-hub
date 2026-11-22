@@ -19,7 +19,15 @@ from gpu_ai.contracts import (
 from gpu_ai.jobs import JobRecord
 from gpu_ai.media.validate import validate_transfer_path
 from gpu_ai.runner import JobRunner
-from gpu_ai.workers import colab_worker_scripts, depth, image_gen, llm, ocr, whisper
+from gpu_ai.workers import (
+    colab_worker_scripts,
+    depth,
+    image_gen,
+    llm,
+    ocr,
+    sam2,
+    whisper,
+)
 
 
 def _path(value: str) -> str:
@@ -86,8 +94,32 @@ class ImageGenInput(WorkerInput):
     contact_sheet: bool = Field(default=False, strict=True)
 
 
+PixelCoordinate = Annotated[int, Field(ge=0, le=sam2.MAX_SIDE, strict=True)]
+
+
+class SamObjectPrompt(Contract):
+    object_id: int = Field(ge=1, le=sam2.MAX_OBJECT_ID, strict=True)
+    point: list[PixelCoordinate] | None = Field(
+        default=None, min_length=2, max_length=2
+    )
+    box: list[PixelCoordinate] | None = Field(default=None, min_length=4, max_length=4)
+
+
+class SamInput(WorkerInput):
+    inputs: list[InputPath] = Field(min_length=1, max_length=1)
+    objects: list[SamObjectPrompt] = Field(min_length=1, max_length=sam2.MAX_OBJECTS)
+    start_frame: int | None = Field(default=None, ge=0, lt=sam2.MAX_FRAMES, strict=True)
+    frame_count: int | None = Field(default=None, ge=1, le=sam2.MAX_FRAMES, strict=True)
+    overlay: bool = Field(default=False, strict=True)
+
+
 # Entry points discover supported operations from this registry.
 OPERATIONS = {
+    Operation.SEGMENT_OBJECT: (
+        SamInput,
+        sam2.validate_request,
+        "Segment prompted objects in an image or short video.",
+    ),
     Operation.GENERATE_IMAGE: (
         ImageGenInput,
         image_gen.validate_request,

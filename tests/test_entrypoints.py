@@ -23,6 +23,7 @@ TOOLS = {
     "transcribe_audio",
     "extract_text",
     "generate_image",
+    "segment_object",
     "estimate_depth",
     "llm_infer",
     "get_job_status",
@@ -49,6 +50,7 @@ def runner(tmp_path, monkeypatch):
         ("extract_text", "sample.png"),
         ("llm_infer", "prompt.txt"),
         ("generate_image", ""),
+        ("segment_object", "sample.png"),
     ],
 )
 def test_cli_runs_each_worker(operation, path, runner, capsys):
@@ -66,6 +68,8 @@ def test_cli_runs_each_worker(operation, path, runner, capsys):
     else:
         option = "--prompt-file" if operation == "llm_infer" else "--input"
         arguments = [option, path]
+    if operation == "segment_object":
+        arguments += ["--parameters", '{"objects":[{"object_id":1,"point":[4,4]}]}']
     assert cli.main(["run", operation, *arguments]) == 0
     result = JobResult.model_validate_json(capsys.readouterr().out)
     assert result.status is JobStatus.COMPLETED

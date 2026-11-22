@@ -17,7 +17,8 @@ from ._runtime import (
 )
 
 MODEL_ID = "Systran/faster-whisper-small"
-PINS = {"faster-whisper": "1.2.0", "ctranslate2": "4.6.0"}
+# faster-whisper 1.2.0 passes metadata_errors to av.open. PyAV 18 removed it.
+PINS = {"faster-whisper": "1.2.0", "ctranslate2": "4.6.0", "av": "17.1.0"}
 ARTIFACTS = ("transcript.json", "transcript.srt")
 
 

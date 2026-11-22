@@ -40,7 +40,10 @@ print(result.model_dump_json(indent=2))
 ```
 
 完了とGPU停止、各 `.npy` と元画像のサイズ一致、`inference_time_ms` と
-`peak_vram_mb` を確認します。T4 でのモデル推論・計測は未実施です。
+`peak_vram_mb` を確認します。
+2026-11-22 の T4 実機スモークでは、96×96 の合成 PNG から同寸法の有限な float32 深度配列と
+16 ビット PNG を生成しました。モデルロード 2.96 秒、推論 1.54 秒、ピーク割当メモリは
+209.1 MiB でした。成果物の SHA-256 一致と停止後のランタイム 0 件を確認しました。
 モデルは Apache-2.0 の Small チェックポイントを固定リビジョンで取得し、
 Colab の PyTorch、Transformers 5.10.4、Pillow 13.0.0 を使用します。
 

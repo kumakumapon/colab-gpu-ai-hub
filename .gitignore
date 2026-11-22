@@ -23,3 +23,5 @@ weights/
 *.jpeg
 *.png
 *.pdf
+
+.colab-cli/

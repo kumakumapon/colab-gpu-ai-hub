@@ -13,3 +13,5 @@ uv run pytest -q
 ```
 
 設定と JSON 入出力の例は [共通契約](docs/contracts.md) を参照してください。
+
+Colab CLI の導入と OAuth 診断は [WSL2 セットアップ](docs/setup-wsl2.md) を参照してください。

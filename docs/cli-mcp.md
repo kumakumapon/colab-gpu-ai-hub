@@ -10,6 +10,7 @@ uv run gpu-ai run transcribe_audio --input audio/sample.wav --parameters '{"lang
 uv run gpu-ai run estimate_depth --input frames/sample.png
 uv run gpu-ai run llm_infer --prompt-file prompt.txt
 uv run gpu-ai run extract_text --input docs/sample.pdf --parameters '{"language":"ja","markdown":true}'
+uv run gpu-ai run generate_image --prompt "A small cabin at sunrise" --parameters '{"seed":42,"steps":15}'
 uv run gpu-ai status JOB_ID
 uv run gpu-ai results JOB_ID
 uv run gpu-ai cancel JOB_ID
@@ -34,7 +35,7 @@ codex mcp add gpu-ai -- "$uv_bin" --directory "$project_dir" run --locked python
 
 CLI と MCP が別の作業ディレクトリから起動する場合は、同じ入力ルートと成果物ディレクトリを絶対パスで設定します。TOML を使う場合は、サーバー起動コマンドの末尾に `--config /path/to/settings.toml` を指定し、CLI には `gpu-ai --config /path/to/settings.toml` を指定します。MCP ホストにも WSL 側の Colab CLI の PATH とキーリングを使える環境を引き継いでください。
 
-Claude Code は `claude mcp list` とセッション内の `/mcp`、Codex は `codex mcp list` とセッション内の `/mcp` で接続を確認します。登録後、ホストで `transcribe_audio`、`estimate_depth`、`llm_infer`、`extract_text`、`get_job_status`、`get_job_result`、`cancel_job` の7ツールが見えるか確認してください。ツール一覧の取得で GPU は起動しません。Python MCP クライアントによる stdio 検証を自動テストに含めています。両ホストの対話セッションでの表示は未検証です。
+Claude Code は `claude mcp list` とセッション内の `/mcp`、Codex は `codex mcp list` とセッション内の `/mcp` で接続を確認します。登録後、ホストで `transcribe_audio`、`estimate_depth`、`llm_infer`、`extract_text`、`generate_image`、`get_job_status`、`get_job_result`、`cancel_job` の8ツールが見えるか確認してください。ツール一覧の取得で GPU は起動しません。Python MCP クライアントによる stdio 検証を自動テストに含めています。両ホストの対話セッションでの表示は未検証です。
 
 - [Claude Code の公式 MCP 手順](https://code.claude.com/docs/en/mcp)
 - [Codex の公式 MCP 手順](https://developers.openai.com/codex/mcp)

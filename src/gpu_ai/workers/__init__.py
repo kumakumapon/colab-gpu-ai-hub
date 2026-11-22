@@ -3,13 +3,19 @@
 from gpu_ai.backends.colab_cli import WorkerScript
 from gpu_ai.contracts import Operation
 
-from . import depth, llm, ocr, whisper
+from . import depth, image_gen, llm, ocr, whisper
 from ._scripts import build_script
 
 
 def colab_worker_scripts() -> dict[Operation, WorkerScript]:
     """Build the application-owned workers accepted by ColabCLIBackend."""
     return {
+        Operation.GENERATE_IMAGE: build_script(
+            "image_gen",
+            (),
+            image_gen.validate_request,
+            artifacts_for=image_gen.output_paths,
+        ),
         Operation.EXTRACT_TEXT: build_script(
             "ocr",
             (),

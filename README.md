@@ -27,3 +27,4 @@ Colab CLI の導入と OAuth 診断は [WSL2 セットアップ](docs/setup-wsl2
 ### 追加ワーカー
 
 - [PaddleOCR 画像・PDF の文字認識](docs/workers/ocr.md)
+- [Stable Diffusion v1.5 画像生成（CreativeML Open RAIL-M）](docs/workers/image_gen.md)

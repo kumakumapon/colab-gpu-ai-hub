@@ -19,7 +19,7 @@ from gpu_ai.contracts import (
 from gpu_ai.jobs import JobRecord
 from gpu_ai.media.validate import validate_transfer_path
 from gpu_ai.runner import JobRunner
-from gpu_ai.workers import colab_worker_scripts, depth, llm, ocr, whisper
+from gpu_ai.workers import colab_worker_scripts, depth, image_gen, llm, ocr, whisper
 
 
 def _path(value: str) -> str:
@@ -73,8 +73,26 @@ class OCRInput(WorkerInput):
     allow_cpu_fallback: bool = Field(default=False, strict=True)
 
 
+class ImageGenInput(WorkerInput):
+    inputs: list[InputPath] = Field(default_factory=list, max_length=0)
+    prompt: str = Field(min_length=1, max_length=image_gen.MAX_PROMPT_CHARS)
+    negative_prompt: str = Field(default="", max_length=image_gen.MAX_PROMPT_CHARS)
+    seed: int = Field(default=0, ge=0, le=image_gen.MAX_SEED, strict=True)
+    width: int = Field(default=512, ge=256, le=768, multiple_of=64, strict=True)
+    height: int = Field(default=512, ge=256, le=768, multiple_of=64, strict=True)
+    steps: int = Field(default=20, ge=1, le=40, strict=True)
+    guidance_scale: float = Field(default=7.5, ge=1, le=15, strict=True)
+    images_per_prompt: int = Field(default=1, ge=1, le=4, strict=True)
+    contact_sheet: bool = Field(default=False, strict=True)
+
+
 # Entry points discover supported operations from this registry.
 OPERATIONS = {
+    Operation.GENERATE_IMAGE: (
+        ImageGenInput,
+        image_gen.validate_request,
+        "Generate images with Stable Diffusion v1.5.",
+    ),
     Operation.EXTRACT_TEXT: (
         OCRInput,
         ocr.validate_request,

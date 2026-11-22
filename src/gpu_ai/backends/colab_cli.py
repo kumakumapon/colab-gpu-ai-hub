@@ -52,6 +52,7 @@ class ErrorCode(StrEnum):
     MODEL_DOWNLOAD_FAILED = "model_download_failed"
     MODEL_LOAD_FAILED = "model_load_failed"
     WORKER_FAILED = "worker_failed"
+    UNSAFE_OUTPUT = "unsafe_output"
 
 
 WORKER_ERROR_CODES = frozenset(
@@ -64,6 +65,7 @@ WORKER_ERROR_CODES = frozenset(
         ErrorCode.MODEL_DOWNLOAD_FAILED,
         ErrorCode.MODEL_LOAD_FAILED,
         ErrorCode.WORKER_FAILED,
+        ErrorCode.UNSAFE_OUTPUT,
     }
 )
 

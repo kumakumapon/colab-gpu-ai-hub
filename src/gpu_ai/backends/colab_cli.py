@@ -9,9 +9,11 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory, mkdtemp
 from threading import Lock
+from time import monotonic
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
+from gpu_ai.backends.base import job_deadline
 from gpu_ai.config import Settings
 from gpu_ai.contracts import (
     Artifact,
@@ -52,6 +54,11 @@ class ColabCLI:
         self.executable = executable
 
     def _run(self, command: str, *args: str, config: Path, timeout: float = 60) -> str:
+        deadline = job_deadline.get()
+        if deadline is not None and command != "stop":
+            timeout = min(timeout, deadline - monotonic())
+            if timeout <= 0:
+                raise ColabCLIError(ErrorCode.TIMEOUT, command)
         argv = [
             self.executable,
             "--auth=oauth2",
@@ -176,6 +183,8 @@ class _Session:
 
 
 class ColabCLIBackend:
+    recovery_key = "colab-cli"
+
     def __init__(
         self,
         scripts: dict[Operation, WorkerScript],
@@ -193,7 +202,12 @@ class ColabCLIBackend:
         with self._provision_lock:
             return self._provision(request)
 
-    def _provision(self, request: TaskRequest) -> str:
+    def provision_owned(self, request: TaskRequest, session_id: str) -> str:
+        self._validate_owned_name(session_id)
+        with self._provision_lock:
+            return self._provision(request, session_id)
+
+    def _provision(self, request: TaskRequest, owned_name: str | None = None) -> str:
         request = TaskRequest.model_validate(request.model_dump())
         if request.operation not in self._scripts:
             raise LookupError("no Colab worker registered for this operation")
@@ -205,6 +219,8 @@ class ColabCLIBackend:
             if session.request.job_id == request.job_id:
                 if session.request != request:
                     raise ValueError("job ID already belongs to a different request")
+                if owned_name is not None and name != owned_name:
+                    raise ValueError("job ID already belongs to a different session")
                 if session.status not in (JobStatus.FAILED, JobStatus.CLEANUP_PENDING):
                     return name
                 raise RuntimeError(
@@ -217,8 +233,12 @@ class ColabCLIBackend:
 
         root = self._settings.workspace.resolve() / ".colab-cli"
         root.mkdir(parents=True, exist_ok=True)
-        name = f"gpu-ai-{uuid4().hex}"
-        directory = Path(mkdtemp(prefix=f"{name}-", dir=root))
+        name = owned_name or f"gpu-ai-{uuid4().hex}"
+        if owned_name is None:
+            directory = Path(mkdtemp(prefix=f"{name}-", dir=root))
+        else:
+            directory = root / name
+            directory.mkdir(mode=0o700)
         config = directory / "sessions.json"
         try:
             self._cli.check_auth(config)
@@ -230,6 +250,8 @@ class ColabCLIBackend:
         session = _Session(request, config)
         self._sessions[name] = session
         try:
+            if owned_name is not None:
+                (directory / "allocation-intent").touch(exist_ok=False)
             output = self._run(name, "new", "--gpu", request.gpu.value, timeout=120)
             if "[colab] Session READY." not in output.splitlines():
                 raise ColabCLIError(ErrorCode.INVALID_RESPONSE, "new")
@@ -244,6 +266,28 @@ class ColabCLIBackend:
             error.session_id = name
             raise
         return name
+
+    @staticmethod
+    def _validate_owned_name(session_id: str) -> None:
+        if re.fullmatch(r"gpu-ai-[a-f0-9]{32}", session_id) is None:
+            raise ValueError("invalid job session name")
+
+    def recover_owned(self, session_id: str) -> CleanupStatus:
+        self._validate_owned_name(session_id)
+        if session_id in self._sessions:
+            return self.stop(session_id)
+        root = self._settings.workspace.resolve() / ".colab-cli"
+        directory = root / session_id
+        intent = directory / "allocation-intent"
+        config = directory / "sessions.json"
+        if root.is_symlink() or directory.is_symlink() or intent.is_symlink():
+            return CleanupStatus.UNKNOWN
+        if not intent.is_file():
+            return CleanupStatus.CONFIRMED
+        if config.is_symlink() or not config.is_file():
+            # An interrupted allocation might have reached Colab before saving its ID.
+            return CleanupStatus.UNKNOWN
+        return self._stop_cli(session_id, config)
 
     def _run(self, name: str, command: str, *args: str, timeout: float = 60) -> str:
         return self._cli._run(
@@ -383,20 +427,7 @@ class ColabCLIBackend:
         session = self._sessions[session_id]
         if session.cleanup == CleanupStatus.CONFIRMED:
             return session.cleanup
-        try:
-            output = self._run(session_id, "stop")
-        except ColabCLIError as error:
-            session.cleanup = (
-                CleanupStatus.UNKNOWN
-                if error.code == ErrorCode.TIMEOUT
-                else CleanupStatus.FAILED
-            )
-        else:
-            session.cleanup = (
-                CleanupStatus.CONFIRMED
-                if "[colab] Session terminated." in output.splitlines()
-                else CleanupStatus.UNKNOWN
-            )
+        session.cleanup = self._stop_cli(session_id, session.config)
         if session.cleanup != CleanupStatus.CONFIRMED:
             session.status = JobStatus.CLEANUP_PENDING
         elif session.result is not None:
@@ -408,3 +439,14 @@ class ColabCLIBackend:
         if session.result is not None:
             session.result.cleanup_status = session.cleanup
         return session.cleanup
+
+    def _stop_cli(self, name: str, config: Path) -> CleanupStatus:
+        try:
+            output = self._cli._run("stop", "-s", name, config=config)
+        except ColabCLIError as error:
+            if error.code == ErrorCode.TIMEOUT:
+                return CleanupStatus.UNKNOWN
+            return CleanupStatus.FAILED
+        if "[colab] Session terminated." in output.splitlines():
+            return CleanupStatus.CONFIRMED
+        return CleanupStatus.UNKNOWN

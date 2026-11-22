@@ -1,0 +1,21 @@
+name: CPU CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.11'
+      - run: uv sync --locked
+      - run: uv run --locked ruff check
+      - run: uv run --locked pytest -q

@@ -112,7 +112,9 @@ def save_depth(directory: Path, depth, metadata: dict, *, numpy, image_module) -
 
 def run() -> dict:
     settings = options(*request_fields())
-    software = ensure_packages({"transformers": TRANSFORMERS_VERSION})
+    software = ensure_packages(
+        {"transformers": TRANSFORMERS_VERSION, "pillow": "13.0.0"}
+    )
     try:
         import numpy
         import PIL
@@ -131,7 +133,7 @@ def run() -> dict:
         processor = AutoImageProcessor.from_pretrained(
             MODEL_ID,
             revision=REVISION,
-            use_fast=False,
+            backend="pil",
             trust_remote_code=False,
         )
         model = (

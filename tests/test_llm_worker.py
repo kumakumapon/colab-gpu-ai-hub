@@ -70,7 +70,7 @@ def qwen_model(monkeypatch):
             state.loaded.append(model_id)
             assert kwargs == {
                 "revision": llm.MODELS[model_id],
-                "torch_dtype": "fp16",
+                "dtype": "fp16",
                 "use_safetensors": True,
                 "trust_remote_code": False,
             }

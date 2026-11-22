@@ -173,7 +173,7 @@ def run() -> dict:
             AutoModelForCausalLM.from_pretrained(
                 settings.model_id,
                 **model_args,
-                torch_dtype=torch.float16,
+                dtype=torch.float16,
                 use_safetensors=True,
             )
             .to(device)

@@ -338,13 +338,17 @@ def track(
         video_storage_device="cpu",
         dtype=torch.float32,
     )
-    for prompt in settings.objects:
-        processor.add_inputs_to_inference_session(
-            inference_session=session,
-            frame_idx=0,
-            obj_ids=prompt.object_id,
-            **prompt.processor_arguments(),
-        )
+    with torch.inference_mode():
+        for prompt in settings.objects:
+            processor.add_inputs_to_inference_session(
+                inference_session=session,
+                frame_idx=0,
+                obj_ids=prompt.object_id,
+                **prompt.processor_arguments(),
+            )
+            # The processor replaces its pending object IDs when a prompt is added.
+            # Encode each new object's first frame while its ID is still pending.
+            model(inference_session=session, frame_idx=0)
     if list(session.obj_ids) != [prompt.object_id for prompt in settings.objects]:
         raise WorkerError("worker_failed")
     context = overlay_writer(av, clip.frames[0]) if settings.overlay else nullcontext()

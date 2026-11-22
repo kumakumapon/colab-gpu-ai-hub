@@ -22,6 +22,7 @@ from gpu_ai.runner import JobRunner
 TOOLS = {
     "transcribe_audio",
     "extract_text",
+    "generate_image",
     "estimate_depth",
     "llm_infer",
     "get_job_status",
@@ -47,6 +48,7 @@ def runner(tmp_path, monkeypatch):
         ("estimate_depth", "sample.png"),
         ("extract_text", "sample.png"),
         ("llm_infer", "prompt.txt"),
+        ("generate_image", ""),
     ],
 )
 def test_cli_runs_each_worker(operation, path, runner, capsys):
@@ -57,10 +59,14 @@ def test_cli_runs_each_worker(operation, path, runner, capsys):
             audio.writeframes(b"\x00\x00" * 1600)
     elif path.endswith(".png"):
         Image.new("RGB", (16, 16), "white").save(target)
-    else:
+    elif path:
         target.write_text("hello")
-    option = "--prompt-file" if operation == "llm_infer" else "--input"
-    assert cli.main(["run", operation, option, path]) == 0
+    if not path:
+        arguments = ["--prompt", "sunset above a mountain"]
+    else:
+        option = "--prompt-file" if operation == "llm_infer" else "--input"
+        arguments = [option, path]
+    assert cli.main(["run", operation, *arguments]) == 0
     result = JobResult.model_validate_json(capsys.readouterr().out)
     assert result.status is JobStatus.COMPLETED
     assert runner.ledger.get(result.job_id).result == result

@@ -68,7 +68,7 @@ def ensure_packages(pins: dict[str, str]) -> dict[str, str]:
     return pins.copy()
 
 
-TRANSFORMERS_VERSION = "5.10.0"
+TRANSFORMERS_VERSION = "5.10.4"
 
 
 def cuda_metrics(torch, device: str) -> None:

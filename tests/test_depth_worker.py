@@ -40,7 +40,6 @@ def relative_model(monkeypatch):
         @classmethod
         def from_pretrained(cls, model_id, **kwargs):
             assert model_id == depth.MODEL_ID and kwargs["revision"] == depth.REVISION
-            assert kwargs["backend"] == "pil"
             return cls()
 
         def __call__(self, *, images, size, **kwargs):
@@ -98,6 +97,11 @@ def relative_model(monkeypatch):
             AutoImageProcessor=Processor,
             AutoModelForDepthEstimation=Model,
         ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers.models.dpt.image_processing_pil_dpt",
+        SimpleNamespace(DPTImageProcessorPil=Processor),
     )
     return groups
 

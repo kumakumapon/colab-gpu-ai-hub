@@ -37,7 +37,7 @@ print(result.model_dump_json(indent=2))
 `parameters` から `prompt` を外します。0.5B で応答、トークン数、生成速度、
 `cleanup_status=confirmed` を確認した後、同じ短文で `model_id` を 3B に変えて確認できます。
 VRAM が不足すると `out_of_memory` を返します。モデルは指定されたリビジョンを
-safetensors で取得します。Transformers 5.10.0 と T4 向けの FP16 を使用し、量子化は行いません。
+safetensors で取得します。Transformers 5.10.4、Jinja2 3.1.6、T4 向けの FP16 を使用し、量子化は行いません。
 モデル推論の T4 実行は 0.5B・3B とも未実施です。
 
 0.5B は Apache-2.0 です。3B は Qwen Research License の対象で、ライセンス上の

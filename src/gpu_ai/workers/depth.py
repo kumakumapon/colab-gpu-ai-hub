@@ -120,7 +120,10 @@ def run() -> dict:
         import PIL
         import torch
         from PIL import Image
-        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+        from transformers import AutoModelForDepthEstimation
+        from transformers.models.dpt.image_processing_pil_dpt import (
+            DPTImageProcessorPil,
+        )
     except (ImportError, OSError, RuntimeError):
         raise WorkerError("worker_dependencies") from None
     software.update(
@@ -130,11 +133,9 @@ def run() -> dict:
     cuda_metrics(torch, settings.device)
     started = perf_counter()
     try:
-        processor = AutoImageProcessor.from_pretrained(
+        processor = DPTImageProcessorPil.from_pretrained(
             MODEL_ID,
             revision=REVISION,
-            backend="pil",
-            trust_remote_code=False,
         )
         model = (
             AutoModelForDepthEstimation.from_pretrained(

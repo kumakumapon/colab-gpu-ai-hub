@@ -133,7 +133,7 @@ def finish(
 def run() -> dict:
     settings = options(*request_fields())
     prompt = read_prompt(settings)
-    software = ensure_packages({"transformers": TRANSFORMERS_VERSION})
+    software = ensure_packages({"transformers": TRANSFORMERS_VERSION, "jinja2": "3.1.6"})
     try:
         import torch
         from transformers import (

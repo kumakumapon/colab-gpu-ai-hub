@@ -26,5 +26,5 @@ uv run gpu-ai run generate_image --prompt "A small cabin at sunrise" --parameter
 モデルの CreativeML Open RAIL-M は利用制限への準拠を条件に商用利用を認めています。重みを再配布する場合は、ライセンスと利用制限を受領者に引き継ぐ条件を確認してください。
 
 - [Stable Diffusion v1.5 モデルカード](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5)
-- [CreativeML Open RAIL-M](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/blob/main/LICENSE)
+- [CreativeML Open RAIL-M](https://huggingface.co/spaces/CompVis/stable-diffusion-license)
 - [Diffusers Stable Diffusion](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/text2img)

@@ -282,7 +282,9 @@ class ColabCLIBackend:
                 )
 
         root = self._settings.workspace.resolve() / ".colab-cli"
-        root.mkdir(parents=True, exist_ok=True)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if root.is_symlink():
+            raise ValueError("Colab session state must be stored in a real directory")
         name = owned_name or f"gpu-ai-{uuid4().hex}"
         if owned_name is None:
             directory = Path(mkdtemp(prefix=f"{name}-", dir=root))

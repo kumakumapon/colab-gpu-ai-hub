@@ -19,7 +19,7 @@ from gpu_ai.contracts import (
 from gpu_ai.jobs import JobRecord
 from gpu_ai.media.validate import validate_transfer_path
 from gpu_ai.runner import JobRunner
-from gpu_ai.workers import colab_worker_scripts, depth, llm, whisper
+from gpu_ai.workers import colab_worker_scripts, depth, llm, ocr, whisper
 
 
 def _path(value: str) -> str:
@@ -64,8 +64,22 @@ class LLMInput(WorkerInput):
     )
 
 
+class OCRInput(WorkerInput):
+    inputs: list[InputPath] = Field(min_length=1, max_length=1)
+    language: Literal["ja", "en"] = "ja"
+    dpi: int = Field(default=144, ge=96, le=200, strict=True)
+    markdown: bool = Field(default=False, strict=True)
+    device: Literal["cuda", "cpu"] = "cuda"
+    allow_cpu_fallback: bool = Field(default=False, strict=True)
+
+
 # Entry points discover supported operations from this registry.
 OPERATIONS = {
+    Operation.EXTRACT_TEXT: (
+        OCRInput,
+        ocr.validate_request,
+        "Recognize text in one image or PDF.",
+    ),
     Operation.TRANSCRIBE_AUDIO: (
         WhisperInput,
         whisper.validate_request,

@@ -38,7 +38,9 @@ def integer(value: object, minimum: int, maximum: int) -> int:
     return value
 
 
-def ensure_packages(pins: dict[str, str]) -> dict[str, str]:
+def ensure_packages(
+    pins: dict[str, str], *, index_url: str | None = None
+) -> dict[str, str]:
     needed = []
     for package, expected in pins.items():
         try:
@@ -48,6 +50,7 @@ def ensure_packages(pins: dict[str, str]) -> dict[str, str]:
         if installed != expected:
             needed.append(f"{package}=={expected}")
     if needed:
+        index = ["--index-url", index_url] if index_url is not None else []
         try:
             subprocess.run(
                 [
@@ -56,6 +59,7 @@ def ensure_packages(pins: dict[str, str]) -> dict[str, str]:
                     "pip",
                     "install",
                     "--disable-pip-version-check",
+                    *index,
                     *needed,
                 ],
                 stdin=subprocess.DEVNULL,

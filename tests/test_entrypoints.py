@@ -21,6 +21,7 @@ from gpu_ai.runner import JobRunner
 
 TOOLS = {
     "transcribe_audio",
+    "extract_text",
     "estimate_depth",
     "llm_infer",
     "get_job_status",
@@ -44,6 +45,7 @@ def runner(tmp_path, monkeypatch):
     [
         ("transcribe_audio", "sample.wav"),
         ("estimate_depth", "sample.png"),
+        ("extract_text", "sample.png"),
         ("llm_infer", "prompt.txt"),
     ],
 )

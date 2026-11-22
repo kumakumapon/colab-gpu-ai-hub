@@ -23,3 +23,7 @@ Colab CLI の導入と OAuth 診断は [WSL2 セットアップ](docs/setup-wsl2
 - [Qwen テキスト推論](docs/workers/llm.md)
 
 [統一 CLI とローカル MCP の使い方](docs/cli-mcp.md)
+
+### 追加ワーカー
+
+- [PaddleOCR 画像・PDF の文字認識](docs/workers/ocr.md)
